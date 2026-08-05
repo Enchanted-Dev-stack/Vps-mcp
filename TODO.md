@@ -19,22 +19,22 @@ This file is the canonical implementation checklist. Update it as work is comple
 - [x] Configure repository Git identity.
 - [x] Preserve existing `/opt/terminal-mcp` as untouched rollback/control MCP.
 - [x] Create this tracker and architecture document.
-- [ ] Commit bootstrap.
+- [x] Commit bootstrap.
 
 ## Phase 1 — monorepo + core domain (TDD)
-- [ ] npm workspaces and TypeScript configs.
-- [ ] Shared schemas/types for workspace/chat/message/run/event/question/binding.
-- [ ] ULID/UUID identifiers with typed prefixes (`ws_`, `cht_`, `run_`, etc.).
-- [ ] Context policy: full chat until threshold; oldest-span compaction metadata thereafter.
-- [ ] Secret redaction utility.
-- [ ] Tests for ID generation, redaction, context-window selection, mode policies.
+- [x] npm workspaces and TypeScript configs.
+- [x] Shared schemas/types for workspace/chat/message/run/event/question/binding.
+- [x] ULID/UUID identifiers with typed prefixes (`ws_`, `cht_`, `run_`, etc.).
+- [x] Context policy: full chat until threshold; oldest-span compaction metadata thereafter.
+- [x] Secret redaction utility.
+- [x] Tests for ID generation, redaction, context-window selection, mode policies.
 
 ## Phase 2 — PostgreSQL persistence (TDD + integration)
-- [ ] Postgres dev/prod container config.
-- [ ] SQL migrations for users/workspaces/chats/messages/attachments/runs/events/questions/bindings/leases/thread_state.
-- [ ] Repository layer with transactions and monotonic per-chat/per-run sequence numbers.
-- [ ] Tests for concurrent event ordering and binding token replay protection.
-- [ ] Lease claim/heartbeat/expiry tests.
+- [x] Postgres dev/prod container config.
+- [x] SQL migrations for users/workspaces/chats/messages/attachments/runs/events/questions/bindings/leases/thread_state.
+- [x] Repository layer with transactions and monotonic per-chat/per-run sequence numbers.
+- [x] Tests for concurrent event ordering and binding token replay protection.
+- [x] Lease claim/heartbeat/expiry tests.
 
 ## Phase 3 — Control API + authentication
 - [ ] Fastify API and health/readiness endpoints.
