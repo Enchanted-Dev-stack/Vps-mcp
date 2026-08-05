@@ -1,4 +1,4 @@
-import type { Attachment, Chat, ChatDetail, Mode, Question, RunEvent, Workspace } from "./types";
+import type { Attachment, Chat, ChatDetail, Mode, Question, RepositoryBrowserResult, RunEvent, Workspace } from "./types";
 let csrfToken = "";
 export function setCsrf(value:string|null|undefined){ csrfToken = value ?? ""; }
 async function request<T>(path:string, init:RequestInit={}):Promise<T>{
@@ -17,6 +17,7 @@ export const api={
   login:(username:string,password:string)=>request<{user:{id:string;username:string};csrfToken:string}>("/api/auth/login",{method:"POST",body:JSON.stringify({username,password})}),
   logout:()=>request<{ok:boolean}>("/api/auth/logout",{method:"POST"}),
   workspaces:()=>request<Workspace[]>("/api/workspaces"),
+  browseRepositories:(path?:string)=>request<RepositoryBrowserResult>(`/api/repositories/browse${path?`?path=${encodeURIComponent(path)}`:""}`),
   createWorkspace:(data:{name:string;rootPath:string;defaultBranch?:string;instructions?:string})=>request<Workspace>("/api/workspaces",{method:"POST",body:JSON.stringify(data)}),
   chats:(workspaceId:string)=>request<Chat[]>(`/api/workspaces/${workspaceId}/chats`),
   createChat:(workspaceId:string,data:{title:string;mode:Mode})=>request<Chat>(`/api/workspaces/${workspaceId}/chats`,{method:"POST",body:JSON.stringify(data)}),

@@ -5,7 +5,8 @@ import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
 import staticPlugin from "@fastify/static";
 import rateLimit from "@fastify/rate-limit";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { AttachmentStore } from "@vps-mcp/attachments";
 import type { WorkspaceManager } from "@vps-mcp/workspace";
 import { verify } from "@node-rs/argon2";
@@ -42,6 +43,7 @@ export interface ApiOptions {
   attachmentStore?: AttachmentStore;
   workspaceManager?: WorkspaceManager;
   staticDir?: string;
+  repositoryBrowseRoots?: string[];
 }
 
 export async function createApi(options: ApiOptions) {
@@ -148,6 +150,65 @@ export async function createApi(options: ApiOptions) {
     reply.clearCookie(SESSION_COOKIE, { path: "/" });
     reply.clearCookie(CSRF_COOKIE, { path: "/" });
     return { ok: true };
+  });
+
+  app.get("/api/repositories/browse", async (request, reply) => {
+    if (!(await auth(request, reply))) return;
+    const query = parse(z.object({ path: z.string().max(4096).optional() }), request.query, reply);
+    if (!query) return;
+
+    const configuredRoots = options.repositoryBrowseRoots ?? ["/opt", "/data", "/home", "/root"];
+    const roots = (await Promise.all(configuredRoots.map(async (root) => {
+      try { return await realpath(root); } catch { return null; }
+    }))).filter((root): root is string => Boolean(root));
+
+    const withinRoot = (candidate: string, root: string) => {
+      const rel = relative(root, candidate);
+      return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    };
+    const gitRepo = async (candidate: string) => {
+      try { await stat(resolve(candidate, ".git")); return true; } catch { return false; }
+    };
+
+    if (!query.path) {
+      return {
+        currentPath: null,
+        parentPath: null,
+        isGitRepository: false,
+        roots: await Promise.all(roots.map(async (path) => ({ path, name: path, isGitRepository: await gitRepo(path) }))),
+        entries: [],
+      };
+    }
+
+    let currentPath: string;
+    try { currentPath = await realpath(query.path); }
+    catch { return reply.code(404).send({ error: "path_not_found" }); }
+    const allowedRoot = roots.find((root) => withinRoot(currentPath, root));
+    if (!allowedRoot) return reply.code(403).send({ error: "path_not_allowed" });
+    if (!(await stat(currentPath)).isDirectory()) return reply.code(400).send({ error: "path_not_directory" });
+
+    const rawEntries = await readdir(currentPath, { withFileTypes: true });
+    const entries = (await Promise.all(rawEntries
+      .filter((entry) => !entry.name.startsWith(".") && (entry.isDirectory() || entry.isSymbolicLink()))
+      .map(async (entry) => {
+        const rawPath = resolve(currentPath, entry.name);
+        try {
+          const path = await realpath(rawPath);
+          if (!withinRoot(path, allowedRoot) || !(await stat(path)).isDirectory()) return null;
+          return { name: entry.name, path, isGitRepository: await gitRepo(path) };
+        } catch { return null; }
+      }))).filter((entry): entry is { name: string; path: string; isGitRepository: boolean } => Boolean(entry))
+      .sort((a, b) => Number(b.isGitRepository) - Number(a.isGitRepository) || a.name.localeCompare(b.name));
+
+    const relToRoot = relative(allowedRoot, currentPath);
+    const parentPath = relToRoot === "" ? null : resolve(currentPath, "..");
+    return {
+      currentPath,
+      parentPath,
+      isGitRepository: await gitRepo(currentPath),
+      roots: roots.map((path) => ({ path, name: path })),
+      entries,
+    };
   });
 
   app.get("/api/workspaces", async (request, reply) => {

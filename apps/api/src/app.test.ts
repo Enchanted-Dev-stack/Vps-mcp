@@ -142,3 +142,38 @@ describe("login rate limiting", () => {
     await app.close();
   });
 });
+
+describe("repository browser", () => {
+  it("lists only allowed VPS directories and marks Git repositories", async () => {
+    const { mkdtemp, mkdir, rm, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { execFileSync } = await import("node:child_process");
+    const root = await mkdtemp(join(tmpdir(), "vps-mcp-picker-"));
+    const repo = join(root, "project-repo");
+    const folder = join(root, "ordinary-folder");
+    await mkdir(repo); await mkdir(folder);
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "ignore" });
+    await writeFile(join(repo, "README.md"), "picker test\n");
+    try {
+      const app = await createApi({ db, secureCookies: false, repositoryBrowseRoots: [root] });
+      expect((await app.inject({ method: "GET", url: "/api/repositories/browse" })).statusCode).toBe(401);
+      const auth = await login(app);
+      const headers = { cookie: auth.cookies };
+      const roots = await app.inject({ method: "GET", url: "/api/repositories/browse", headers });
+      expect(roots.statusCode).toBe(200);
+      expect(roots.json().roots[0].path).toBe(root);
+      const listing = await app.inject({ method: "GET", url: `/api/repositories/browse?path=${encodeURIComponent(root)}`, headers });
+      expect(listing.statusCode).toBe(200);
+      expect(listing.json().entries).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "project-repo", isGitRepository: true }),
+        expect.objectContaining({ name: "ordinary-folder", isGitRepository: false }),
+      ]));
+      const blocked = await app.inject({ method: "GET", url: "/api/repositories/browse?path=/etc", headers });
+      expect(blocked.statusCode).toBe(403);
+      await app.close();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

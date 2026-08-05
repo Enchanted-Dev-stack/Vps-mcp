@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test, expect } from "@playwright/test";
 
 const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? "";
@@ -50,7 +50,15 @@ test("Codex-style portal happy path", async ({ page, context }) => {
   const newWorkspace = page.getByRole("button", { name: /New workspace/i });
   if (await newWorkspace.isVisible().catch(() => false)) await newWorkspace.click();
   await page.getByLabel("Name").fill(workspaceName);
-  await page.getByLabel("Repository path").fill(repo);
+  await page.getByRole("button", { name: "Browse VPS" }).click();
+  await expect(page.getByRole("heading", { name: "Select repository" })).toBeVisible();
+  await page.locator(".repo-list > button").filter({ hasText: "/data" }).click();
+  for (const folder of ["vps-mcp", "smoke", basename(repoParent)]) {
+    await page.locator(".repo-open").filter({ hasText: folder }).click();
+  }
+  const repositoryRow = page.locator(".repo-row").filter({ hasText: "Git repository" }).filter({ hasText: "repo" });
+  await repositoryRow.getByRole("button", { name: "Select" }).click();
+  await expect(page.getByLabel("Project repository")).toHaveValue(repo);
   await page.getByLabel("Project instructions").fill("Keep tests green. This is a browser E2E workspace.");
   await page.getByRole("button", { name: "Create workspace" }).click();
   await expect(page.locator(".workspace-select")).toContainText(workspaceName);

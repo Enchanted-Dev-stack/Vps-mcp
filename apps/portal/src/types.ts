@@ -6,3 +6,6 @@ export interface Question { id:string; chatId:string; runId:string|null; kind:"t
 export interface RunEvent { id:string; chatId:string; runId:string|null; seq:number; type:string; payload:Record<string,unknown>; createdAt:string; }
 export interface Attachment { id:string; chatId:string; messageId:string|null; originalName:string; mimeType:string; sha256:string; sizeBytes:number; createdAt:string; }
 export interface ChatDetail extends Chat { messages:Message[]; questions:Question[]; attachments:Attachment[]; threadState:{summary:string; structured:Record<string,unknown>}|null; }
+
+export interface RepositoryBrowserEntry { name:string; path:string; isGitRepository:boolean; }
+export interface RepositoryBrowserResult { currentPath:string|null; parentPath:string|null; isGitRepository:boolean; roots:{name:string;path:string;isGitRepository?:boolean}[]; entries:RepositoryBrowserEntry[]; }

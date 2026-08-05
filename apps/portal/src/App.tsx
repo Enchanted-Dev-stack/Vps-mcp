@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity, Bot, Check, ChevronDown, CircleHelp, Code2, Copy, Eye, FolderGit2, Hammer,
+  Activity, ArrowLeft, Bot, Check, ChevronDown, CircleHelp, Code2, Copy, Eye, Folder, FolderGit2, Hammer,
   Link2, ListTodo, Loader2, LogOut, MoreHorizontal, Paperclip, Plus, Send, TerminalSquare, X
 } from "lucide-react";
 import { api, setCsrf } from "./api";
-import type { Attachment, Chat, ChatDetail, Mode, Question, RunEvent, Workspace } from "./types";
+import type { Attachment, Chat, ChatDetail, Mode, Question, RepositoryBrowserResult, RunEvent, Workspace } from "./types";
 
 const eventTypes=["agent.connected","agent.disconnected","activity","command.started","command.stdout","command.stderr","command.completed","files.changed","question.created","question.answered","run.completed","run.failed"];
 
@@ -94,9 +94,59 @@ function MessageAttachments({attachments}:{attachments:Attachment[]}){if(!attach
 function DiffModal({chatId,onClose}:{chatId:string;onClose:()=>void}){const[data,setData]=useState<{short:string;diffStat:string;diff:string;branch?:string|null}|null>(null),[error,setError]=useState("");useEffect(()=>{api.diff(chatId).then(setData).catch(e=>setError(e instanceof Error?e.message:String(e)))},[chatId]);return <Modal title="Changes" onClose={onClose}><div className="diff-body">{error?<div className="error-box">{error}</div>:!data?<div className="modal-loading"><Loader2 className="spin" size={17}/>Loading changes…</div>:<>{data.branch&&<div className="diff-branch"><Code2 size={14}/>{data.branch}</div>}{data.short?<><pre className="diff-status">{data.short}</pre>{data.diffStat&&<pre className="diff-stat">{data.diffStat}</pre>}<pre className="diff-code">{data.diff||"Tracked diff is empty; changes may be untracked files listed above."}</pre></>:<div className="empty-diff">No uncommitted changes in this worktree.</div>}</>}</div></Modal>}
 function SummaryModal({state,onClose}:{state:{summary:string;structured:Record<string,unknown>};onClose:()=>void}){return <Modal title="Run summary" onClose={onClose}><div className="summary-body"><p>{state.summary}</p>{Object.keys(state.structured??{}).length>0&&<><div className="summary-label">Structured state</div><pre>{JSON.stringify(state.structured,null,2)}</pre></>}</div></Modal>}
 
-function WorkspaceModal({workspaces,current,onSelect,onCreated,onClose}:{workspaces:Workspace[];current:string;onSelect:(id:string)=>void;onCreated:(w:Workspace)=>void;onClose:()=>void}){
-  const [creating,setCreating]=useState(workspaces.length===0),[name,setName]=useState(""),[rootPath,setRootPath]=useState(""),[instructions,setInstructions]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  return <Modal title="Workspaces" onClose={onClose}>{!creating?<><div className="workspace-list">{workspaces.map(w=><button key={w.id} className={w.id===current?"active":""} onClick={()=>onSelect(w.id)}><FolderGit2 size={16}/><span><b>{w.name}</b><small>{w.rootPath}</small></span>{w.id===current&&<Check size={16}/>}</button>)}</div><button className="secondary full" onClick={()=>setCreating(true)}><Plus size={15}/>New workspace</button></>:<form className="form-stack" onSubmit={async e=>{e.preventDefault();setBusy(true);setError("");try{onCreated(await api.createWorkspace({name,rootPath,instructions}))}catch(err){setError(err instanceof Error?err.message:String(err));setBusy(false)}}}><label>Name<input value={name} onChange={e=>setName(e.target.value)} placeholder="Spotlyst" autoFocus required/></label><label>Repository path<input value={rootPath} onChange={e=>setRootPath(e.target.value)} placeholder="/data/coolify/applications/..." required/><small>Must be a Git repository accessible on this VPS.</small></label><label>Project instructions<textarea rows={5} value={instructions} onChange={e=>setInstructions(e.target.value)} placeholder="Testing commands, architecture rules, things the agent must preserve…"/></label>{error&&<div className="error-box">{error}</div>}<div className="modal-actions">{workspaces.length>0&&<button type="button" className="secondary" onClick={()=>setCreating(false)}>Back</button>}<button className="primary" disabled={busy||!name.trim()||!rootPath.trim()}>{busy&&<Loader2 className="spin" size={15}/>}Create workspace</button></div></form>}</Modal>
+function RepositoryPicker({onSelect,onClose}:{onSelect:(path:string)=>void;onClose:()=>void}){
+  const [data,setData]=useState<RepositoryBrowserResult|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState("");
+  const load=useCallback(async(path?:string)=>{setLoading(true);setError("");try{setData(await api.browseRepositories(path))}catch(err){setError(err instanceof Error?err.message:String(err))}finally{setLoading(false)}},[]);
+  useEffect(()=>{void load()},[load]);
+  return <Modal title="Select repository" onClose={onClose}><div className="repo-picker">
+    <div className="repo-picker-head">{data?.currentPath&&<button type="button" className="icon-btn repo-back" onClick={()=>void load(data.parentPath??undefined)} title="Back"><ArrowLeft size={15}/></button>}<div><b>{data?.currentPath??"VPS locations"}</b><small>Choose an existing Git repository on this VPS.</small></div></div>
+    {error&&<div className="error-box">{error}</div>}
+    {loading?<div className="modal-loading"><Loader2 className="spin" size={16}/>Loading folders…</div>:<>
+      {!data?.currentPath?<div className="repo-list">{data?.roots.map(root=><button type="button" key={root.path} onClick={()=>void load(root.path)}><Folder size={16}/><span><b>{root.name}</b><small>{root.path}</small></span><ChevronDown className="repo-chevron" size={14}/></button>)}</div>:<>
+        {data.isGitRepository&&<div className="repo-current"><FolderGit2 size={16}/><span><b>Git repository detected</b><small>{data.currentPath}</small></span><button type="button" className="primary" onClick={()=>onSelect(data.currentPath!)}>Use repository</button></div>}
+        <div className="repo-list">{data.entries.map(entry=><div className={`repo-row ${entry.isGitRepository?"is-repo":""}`} key={entry.path}><button type="button" className="repo-open" onClick={()=>void load(entry.path)}><span className="repo-icon">{entry.isGitRepository?<FolderGit2 size={16}/>:<Folder size={16}/>}</span><span><b>{entry.name}</b><small>{entry.isGitRepository?"Git repository":entry.path}</small></span></button>{entry.isGitRepository&&<button type="button" className="repo-use" onClick={()=>onSelect(entry.path)}>Select</button>}</div>)}{!data.entries.length&&<div className="repo-empty">No subfolders here.</div>}</div>
+      </>}
+    </>}
+    <div className="repo-picker-note">This browser only shows server folders under approved VPS roots. A normal browser file picker would browse your own PC, not the VPS.</div>
+  </div></Modal>
 }
+
+function WorkspaceModal({workspaces,current,onSelect,onCreated,onClose}:{workspaces:Workspace[];current:string;onSelect:(id:string)=>void;onCreated:(w:Workspace)=>void;onClose:()=>void}){
+  const [creating,setCreating]=useState(workspaces.length===0);
+  const [name,setName]=useState("");
+  const [rootPath,setRootPath]=useState("");
+  const [instructions,setInstructions]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState("");
+  const [browse,setBrowse]=useState(false);
+
+  async function create(e:React.FormEvent){
+    e.preventDefault();
+    setBusy(true); setError("");
+    try { onCreated(await api.createWorkspace({name,rootPath,instructions})); }
+    catch(err){ setError(err instanceof Error?err.message:String(err)); setBusy(false); }
+  }
+
+  return <>
+    <Modal title="Workspaces" onClose={onClose}>
+      {!creating ? <>
+        <div className="workspace-list">{workspaces.map(w=><button key={w.id} className={w.id===current?"active":""} onClick={()=>onSelect(w.id)}><FolderGit2 size={16}/><span><b>{w.name}</b><small>{w.rootPath}</small></span>{w.id===current&&<Check size={16}/>}</button>)}</div>
+        <button className="secondary full" onClick={()=>setCreating(true)}><Plus size={15}/>New workspace</button>
+      </> : <form className="form-stack" onSubmit={create}>
+        <label>Name<input value={name} onChange={e=>setName(e.target.value)} placeholder="Spotlyst" autoFocus required/></label>
+        <div className="field-group repository-field">
+          <span>Project repository</span>
+          <div className="repository-input"><input aria-label="Project repository" value={rootPath} onChange={e=>setRootPath(e.target.value)} placeholder="Select an existing Git repository on the VPS" required/><button type="button" className="secondary" onClick={()=>setBrowse(true)}><Folder size={14}/>Browse VPS</button></div>
+          <small>This is the source Git repository the agent will work on. Workspace/chat data is stored separately by the portal.</small>
+        </div>
+        <label>Project instructions<textarea rows={5} value={instructions} onChange={e=>setInstructions(e.target.value)} placeholder="Testing commands, architecture rules, things the agent must preserve…"/></label>
+        {error&&<div className="error-box">{error}</div>}
+        <div className="modal-actions">{workspaces.length>0&&<button type="button" className="secondary" onClick={()=>setCreating(false)}>Back</button>}<button className="primary" disabled={busy||!name.trim()||!rootPath.trim()}>{busy&&<Loader2 className="spin" size={15}/>}Create workspace</button></div>
+      </form>}
+    </Modal>
+    {browse&&<RepositoryPicker onClose={()=>setBrowse(false)} onSelect={path=>{setRootPath(path);setBrowse(false)}}/>}
+  </>
+}
+
 function NewChatModal({onClose,onCreate}:{onClose:()=>void;onCreate:(data:{title:string;mode:Mode})=>void}){const[title,setTitle]=useState(""),[mode,setMode]=useState<Mode>("plan");return <Modal title="New chat" onClose={onClose}><form className="form-stack" onSubmit={e=>{e.preventDefault();onCreate({title,mode})}}><label>Task name<input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Fix onboarding flow" autoFocus required/></label><div className="field-group"><span>Starting mode</span><ModeSwitch mode={mode} onChange={setMode}/></div><p className="hint">Plan and Review restrict workspace commands to inspection. Build gets its own Git worktree.</p><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancel</button><button className="primary" disabled={!title.trim()}>Create chat</button></div></form></Modal>}
 function BindingModal({binding,onClose}:{binding:{token:string;expiresAt:string};onClose:()=>void}){const[copied,setCopied]=useState(false);const instruction=`connect to ${binding.token}`;return <Modal title="Connect ChatGPT" onClose={onClose}><div className="binding-body"><p>Open a ChatGPT conversation that has this MCP enabled and send:</p><div className="binding-code"><code>{instruction}</code><button onClick={async()=>{await navigator.clipboard.writeText(instruction);setCopied(true);setTimeout(()=>setCopied(false),1200)}}>{copied?<Check size={16}/>:<Copy size={16}/>}</button></div><div className="binding-notes"><div><span>One-time code</span><small>It can bind only one MCP session.</small></div><div><span>Expires</span><small>{new Date(binding.expiresAt).toLocaleTimeString()}</small></div></div><p className="hint">Each portal chat should be connected to a different ChatGPT conversation to avoid conflicts. MCP cannot wake an idle ChatGPT Web tab by itself, so portal messages remain queued until that connected conversation runs/syncs.</p></div></Modal>}

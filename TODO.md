@@ -55,6 +55,7 @@ This file is the canonical implementation checklist. Update it as work is comple
 ## Phase 5 — clean Codex-like portal UI
 - [x] React/Vite app with compact sidebar and chat workspace.
 - [x] Workspace selector + chats.
+- [x] Server-side VPS Git repository picker with approved-root containment.
 - [x] New workspace / new chat dialogs.
 - [x] Plan / Build / Review segmented mode switch.
 - [x] Chat history + composer.
