@@ -141,3 +141,10 @@ This file is the canonical implementation checklist. Update it as work is comple
 - [x] Cancellation is checked before starting subsequent agent actions.
 - [x] Cancelled run emits durable events/status and the agent remains connected for new instructions.
 - [x] Unit/integration/protocol/smoke/E2E coverage for wait + interrupt + workspace-folder semantics.
+
+## Phase 13 — deterministic portal connector routing
+- [x] Remove unrestricted `terminal` from the v2 portal connector.
+- [x] Keep workspace command execution only behind `chat_terminal` after `chat_connect`.
+- [x] Advertise only the `chat:control` OAuth scope on v2.
+- [x] Protocol test asserts `terminal` cannot reappear in the v2 tool list.
+- [ ] Deploy and verify public tool discovery + smoke/E2E.

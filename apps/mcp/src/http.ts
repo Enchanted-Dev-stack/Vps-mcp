@@ -45,7 +45,7 @@ export function createMcpHttpServer(options: McpHttpOptions): Server {
     const url = new URL(req.url ?? "/", options.publicBaseUrl);
     try {
       if (url.pathname === "/.well-known/oauth-protected-resource" && req.method === "GET") {
-        return sendJson(res, 200, { resource: `${options.publicBaseUrl}${path}`, authorization_servers: [options.publicBaseUrl], scopes_supported: ["terminal:execute", "chat:control"] });
+        return sendJson(res, 200, { resource: `${options.publicBaseUrl}${path}`, authorization_servers: [options.publicBaseUrl], scopes_supported: ["chat:control"] });
       }
       if (url.pathname === "/.well-known/oauth-authorization-server" && req.method === "GET") {
         return sendJson(res, 200, {
@@ -55,7 +55,7 @@ export function createMcpHttpServer(options: McpHttpOptions): Server {
           response_types_supported: ["code"],
           grant_types_supported: ["authorization_code"],
           code_challenge_methods_supported: ["S256"],
-          scopes_supported: ["terminal:execute", "chat:control"],
+          scopes_supported: ["chat:control"],
           token_endpoint_auth_methods_supported: ["none"],
           client_id_metadata_document_supported: true,
         });
@@ -66,7 +66,7 @@ export function createMcpHttpServer(options: McpHttpOptions): Server {
           res.writeHead(400).end("Invalid authorization request"); return;
         }
         const hidden = fields.map((field) => `<input type="hidden" name="${field}" value="${html(url.searchParams.get(field) ?? "")}">`).join("");
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }).end(`<!doctype html><meta name="viewport" content="width=device-width"><title>Authorize VPS MCP</title><style>body{font:15px system-ui;background:#0d1117;color:#e6edf3;display:grid;place-items:center;min-height:100vh;margin:0}main{width:min(420px,90vw);padding:28px;border:1px solid #30363d;border-radius:12px;background:#161b22}input{box-sizing:border-box;width:100%;margin:12px 0;padding:11px;border:1px solid #30363d;border-radius:7px;background:#0d1117;color:#fff}button{padding:10px 16px;border:0;border-radius:7px;background:#f0f6fc;color:#0d1117;font-weight:600}</style><main><h1>Authorize VPS MCP</h1><p>This grants ChatGPT access to the test VPS and agent portal.</p><form method="post" action="/oauth/authorize">${hidden}<label>Access password<input name="password" type="password" autofocus required></label><button>Authorize</button></form></main>`);
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }).end(`<!doctype html><meta name="viewport" content="width=device-width"><title>Authorize VPS MCP</title><style>body{font:15px system-ui;background:#0d1117;color:#e6edf3;display:grid;place-items:center;min-height:100vh;margin:0}main{width:min(420px,90vw);padding:28px;border:1px solid #30363d;border-radius:12px;background:#161b22}input{box-sizing:border-box;width:100%;margin:12px 0;padding:11px;border:1px solid #30363d;border-radius:7px;background:#0d1117;color:#fff}button{padding:10px 16px;border:0;border-radius:7px;background:#f0f6fc;color:#0d1117;font-weight:600}</style><main><h1>Authorize VPS MCP</h1><p>This grants ChatGPT access to the scoped VPS coding-agent portal.</p><form method="post" action="/oauth/authorize">${hidden}<label>Access password<input name="password" type="password" autofocus required></label><button>Authorize</button></form></main>`);
         return;
       }
       if (url.pathname === "/oauth/authorize" && req.method === "POST") {
@@ -95,7 +95,7 @@ export function createMcpHttpServer(options: McpHttpOptions): Server {
         const token = randomBytes(48).toString("base64url");
         const ttl = 30 * 24 * 60 * 60 * 1000;
         await options.db.storeMcpAccessToken(token, ttl);
-        return sendJson(res, 200, { access_token: token, token_type: "Bearer", expires_in: ttl / 1000, scope: "terminal:execute chat:control" });
+        return sendJson(res, 200, { access_token: token, token_type: "Bearer", expires_in: ttl / 1000, scope: "chat:control" });
       }
       if (url.pathname !== path) { res.writeHead(404).end(); return; }
       if (!(await authorized(req))) {

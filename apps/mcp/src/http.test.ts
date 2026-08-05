@@ -43,17 +43,14 @@ describe("MCP HTTP", () => {
     const client = new Client({ name: "test", version: "1.0.0" });
     await client.connect(transport);
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name);
-    expect(toolNames).toEqual(expect.arrayContaining(["terminal", "chat_connect", "chat_sync", "chat_wait", "chat_ask", "chat_terminal", "chat_complete"]));
-
-    const legacyBeforeBinding = await client.callTool({ name: "terminal", arguments: { command: "printf legacy-ok" } });
-    expect(legacyBeforeBinding.isError).not.toBe(true);
+    expect(toolNames).toEqual(expect.arrayContaining(["chat_connect", "chat_sync", "chat_wait", "chat_ask", "chat_terminal", "chat_complete"]));
+    expect(toolNames).not.toContain("terminal");
 
     const ws = await db.createWorkspace({ name: "W", rootPath: repo });
     const chat = await db.createChat({ workspaceId: ws.id, title: "P", mode: "plan" });
     await db.appendMessage({ chatId: chat.id, role: "user", source: "portal", content: "Inspect" });
     const binding = await db.issueBinding(chat.id, 60_000);
     expect((await client.callTool({ name: "chat_connect", arguments: { binding_code: binding.token } })).isError).not.toBe(true);
-    expect((await client.callTool({ name: "terminal", arguments: { command: "printf should-be-blocked" } })).isError).toBe(true);
     expect((await client.callTool({ name: "chat_terminal", arguments: { command: "git status --short" } })).isError).not.toBe(true);
     expect((await client.callTool({ name: "chat_terminal", arguments: { command: "touch blocked" } })).isError).toBe(true);
     await client.close();

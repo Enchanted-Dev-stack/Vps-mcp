@@ -1,7 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ChatAgentService, AgentSession } from "./chat-service.js";
-import { executeCommand } from "./executor.js";
 
 function ok(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value) }] };
@@ -11,14 +10,7 @@ function fail(error: unknown) {
 }
 
 export function createToolServer(session: AgentSession, agent: ChatAgentService): McpServer {
-  const server = new McpServer({ name: "vps-mcp", version: "2.0.0" });
-
-  server.tool("terminal", "Execute a command on the test VPS using /bin/bash -lc. Use tmux for long-running processes.", {
-    command: z.string().min(1), cwd: z.string().optional(), timeout: z.number().finite().optional(),
-  }, async ({ command, cwd, timeout }) => {
-    if (session.chatId) return fail(new Error("The unrestricted terminal tool is disabled while this MCP session is connected to a portal chat. Use chat_terminal so the chat mode and worktree policy are enforced."));
-    try { return ok(await executeCommand(command, { cwd, timeoutMs: timeout })); } catch (error) { return fail(error); }
-  });
+  const server = new McpServer({ name: "vps-agent", version: "2.1.0" });
 
   server.tool("chat_connect", "Connect this MCP session to a portal chat with a one-time binding code and hydrate its context. Stay attached: after handling available work, call chat_wait instead of ending the turn when possible.", {
     binding_code: z.string().min(1),

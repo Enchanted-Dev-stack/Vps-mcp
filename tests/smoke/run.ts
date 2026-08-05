@@ -113,7 +113,7 @@ try {
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   const clientId = "https://chatgpt.com/vps-mcp-smoke";
   const redirectUri = "https://chatgpt.com/connector/oauth/vps-mcp-smoke";
-  const authParams = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: redirectUri, code_challenge: challenge, code_challenge_method: "S256", state: "smoke", resource: `${base}/mcp`, scope: "terminal:execute chat:control" });
+  const authParams = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: redirectUri, code_challenge: challenge, code_challenge_method: "S256", state: "smoke", resource: `${base}/mcp`, scope: "chat:control" });
   const authPage = await fetch(`${base}/oauth/authorize?${authParams}`); assert(authPage.status === 200, `OAuth authorize page status ${authPage.status}`);
   const authorize = await fetch(`${base}/oauth/authorize`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ ...Object.fromEntries(authParams), password: oauthPassword }), redirect: "manual" });
   assert(authorize.status === 302, `OAuth approval status ${authorize.status}`);
