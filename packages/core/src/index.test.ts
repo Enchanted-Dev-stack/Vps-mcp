@@ -80,8 +80,8 @@ describe("selectHydration", () => {
       compactionSummaryTokens: 100,
     });
     expect(result.mode).toBe("compacted");
-    expect(result.compactedThroughSeq).toBe(2);
-    expect(result.messages.map((m) => m.seq)).toEqual([3, 4, 5, 6, 7, 8]);
+    expect(result.compactedThroughSeq).toBe(3);
+    expect(result.messages.map((m) => m.seq)).toEqual([4, 5, 6, 7, 8]);
   });
 
   it("always keeps the newest message verbatim even if it alone is huge", () => {

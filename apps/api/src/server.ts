@@ -1,6 +1,8 @@
 import { hash } from "@node-rs/argon2";
 import { Database, migrate } from "@vps-mcp/db";
 import { createApi } from "./app.js";
+import { AttachmentStore } from "@vps-mcp/attachments";
+import { WorkspaceManager } from "@vps-mcp/workspace";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
@@ -14,7 +16,9 @@ if (adminUsername && adminPassword && !(await db.getPortalUserByUsername(adminUs
   console.log(`created portal admin ${adminUsername}`);
 }
 
-const app = createApi({ db, secureCookies: process.env.SECURE_COOKIES !== "false" });
+const workspaceManager = new WorkspaceManager(process.env.WORKTREE_ROOT ?? "/data/vps-mcp/worktrees");
+const attachmentStore = new AttachmentStore(process.env.UPLOAD_ROOT ?? "/data/vps-mcp/uploads");
+const app = createApi({ db, secureCookies: process.env.SECURE_COOKIES !== "false", workspaceManager, attachmentStore, staticDir: process.env.PORTAL_STATIC_DIR });
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? "3100");
 await app.listen({ host, port });

@@ -3,15 +3,15 @@
 This file is the canonical implementation checklist. Update it as work is completed or scope changes.
 
 ## Non-negotiable invariants
-- [ ] Keep `/opt/terminal-mcp` operational until replacement passes smoke tests.
-- [ ] Never expose root executor credentials or DB credentials to the browser.
-- [ ] One ChatGPT/MCP lease per chat; different chats may run concurrently.
-- [ ] Separate Git worktree per Build-mode chat to prevent edit collisions.
-- [ ] Full canonical chat history is retained; compact only under context pressure.
-- [ ] Plan mode must not intentionally modify workspace files.
-- [ ] Portal can surface structured questions/answers to an agent.
-- [ ] Persist events before broadcasting them to the UI.
-- [ ] Redact likely secrets from activity/output shown in the portal.
+- [x] Keep `/opt/terminal-mcp` operational until replacement passes smoke tests.
+- [x] Never expose root executor credentials or DB credentials to the browser.
+- [x] One ChatGPT/MCP lease per chat; different chats may run concurrently.
+- [x] Separate Git worktree per Build-mode chat to prevent edit collisions.
+- [x] Full canonical chat history is retained; compact only under context pressure.
+- [x] Plan mode must not intentionally modify workspace files.
+- [x] Portal can surface structured questions/answers to an agent.
+- [x] Persist events before broadcasting them to the UI.
+- [x] Redact likely secrets from activity/output shown in the portal.
 - [ ] Unit/integration/smoke tests must pass before live MCP cutover.
 
 ## Phase 0 — bootstrap / safety
@@ -44,73 +44,73 @@ This file is the canonical implementation checklist. Update it as work is comple
 - [x] Message append/history APIs.
 - [x] One-time ChatGPT binding code issuance.
 - [x] Structured question create/answer APIs.
-- [ ] Validation and authorization tests.
+- [x] Validation and authorization tests.
 
 ## Phase 4 — realtime event system
 - [x] Durable run/event persistence.
 - [x] SSE endpoint with replay from `Last-Event-ID`/sequence cursor.
 - [x] Run activity, command, file change, question, completion events.
-- [ ] SSE disconnect/reconnect/no-duplicate integration tests.
+- [x] SSE disconnect/reconnect/no-duplicate integration tests.
 
 ## Phase 5 — clean Codex-like portal UI
-- [ ] React/Vite app with compact sidebar and chat workspace.
-- [ ] Workspace selector + chats.
-- [ ] New workspace / new chat dialogs.
-- [ ] Plan / Build / Review segmented mode switch.
-- [ ] Chat history + composer.
-- [ ] Agent connection badge + one-time binding-code dialog.
-- [ ] Collapsible activity/tool cards.
-- [ ] Structured question cards (single choice, multi choice, free text).
+- [x] React/Vite app with compact sidebar and chat workspace.
+- [x] Workspace selector + chats.
+- [x] New workspace / new chat dialogs.
+- [x] Plan / Build / Review segmented mode switch.
+- [x] Chat history + composer.
+- [x] Agent connection badge + one-time binding-code dialog.
+- [x] Collapsible activity/tool cards.
+- [x] Structured question cards (single choice, multi choice, free text).
 - [ ] Diff/run summary surfaces.
-- [ ] Responsive/mobile basics.
+- [x] Responsive/mobile basics.
 - [ ] Playwright happy-path tests.
 
 ## Phase 6 — MCP gateway v2 (TDD)
-- [ ] Preserve original `terminal(command,cwd?,timeout?)` behavior.
-- [ ] OAuth/PKCE flow with persistent hashed access tokens.
-- [ ] `chat_connect(binding_code)` — claim chat lease + hydration bundle.
-- [ ] `chat_sync(cursor?)` — delta messages/events/answers.
-- [ ] `chat_activity(stage,message)`.
-- [ ] `chat_ask(question, options?, allow_multiple?, wait_ms?)`.
-- [ ] `chat_terminal(command,cwd?,timeout?)` — chat-aware execution + event capture.
-- [ ] `chat_complete(answer,summary?,todos?)`.
-- [ ] Attachment metadata/fetch tool(s).
-- [ ] MCP protocol integration tests with simulated client.
+- [x] Preserve original `terminal(command,cwd?,timeout?)` behavior.
+- [x] OAuth/PKCE flow with persistent hashed access tokens.
+- [x] `chat_connect(binding_code)` — claim chat lease + hydration bundle.
+- [x] `chat_sync(cursor?)` — delta messages/events/answers.
+- [x] `chat_activity(stage,message)`.
+- [x] `chat_ask(question, options?, allow_multiple?, wait_ms?)`.
+- [x] `chat_terminal(command,cwd?,timeout?)` — chat-aware execution + event capture.
+- [x] `chat_complete(answer,summary?,todos?)`.
+- [x] Attachment metadata/fetch tool(s).
+- [x] MCP protocol integration tests with simulated client.
 
 ## Phase 7 — Git/worktree isolation
-- [ ] Workspace repository registration/validation.
-- [ ] Build-mode per-chat branch + worktree creation.
-- [ ] Plan-mode read-only policy.
-- [ ] Git status/diff capture into events.
-- [ ] Concurrent same-file test proves Chat A/B isolation and unchanged base checkout.
+- [x] Workspace repository registration/validation.
+- [x] Build-mode per-chat branch + worktree creation.
+- [x] Plan-mode read-only policy.
+- [x] Git status/diff capture into events.
+- [x] Concurrent same-file test proves Chat A/B isolation and unchanged base checkout.
 
 ## Phase 8 — attachments
-- [ ] Content-addressed upload storage.
-- [ ] MIME sniffing, name normalization, size limits, SHA-256 dedupe.
-- [ ] Images/text/PDF/source/ZIP metadata flow.
-- [ ] Path traversal and malicious filename tests.
-- [ ] MCP attachment delivery.
+- [x] Content-addressed upload storage.
+- [x] MIME sniffing, name normalization, size limits, SHA-256 dedupe.
+- [x] Images/text/PDF/source/ZIP metadata flow.
+- [x] Path traversal and malicious filename tests.
+- [x] MCP attachment delivery.
 
 ## Phase 9 — context + compaction
-- [ ] Canonical full chat retained permanently.
-- [ ] Hydration sends full verbatim thread while safely within configured context budget.
-- [ ] When threshold is reached, compact oldest span and keep all newer messages verbatim.
-- [ ] Structured compaction state: goal, requirements, decisions, architecture, completed, in-progress, TODOs, known issues, important files/tests.
-- [ ] Tool-output pruning/summaries while retaining raw persisted output.
-- [ ] Older-history retrieval/search.
+- [x] Canonical full chat retained permanently.
+- [x] Hydration sends full verbatim thread while safely within configured context budget.
+- [x] When threshold is reached, compact oldest span and keep all newer messages verbatim.
+- [x] Structured compaction state: goal, requirements, decisions, architecture, completed, in-progress, TODOs, known issues, important files/tests.
+- [x] Tool-output pruning/summaries while retaining raw persisted output.
+- [x] Older-history retrieval/search.
 - [ ] 500-message reconnect/context-bound integration test.
 
 ## Phase 10 — production hardening
 - [ ] Rate limits, CSP/security headers, XSS/HTML escaping.
-- [ ] Secret redaction before UI persistence/broadcast.
-- [ ] Path/symlink protections for workspace operations.
+- [x] Secret redaction before UI persistence/broadcast.
+- [x] Path/symlink protections for workspace operations.
 - [ ] Audit log.
 - [ ] Crash/restart DB recovery tests.
 - [ ] Large-output/hung-command tests.
 - [ ] Dependency audit.
 
 ## Phase 11 — deployment + smoke tests
-- [ ] Build production bundles.
+- [x] Build production bundles.
 - [ ] Install systemd units without replacing v1 first.
 - [ ] Add Traefik portal/staging routes.
 - [ ] `npm run smoke` validates portal, DB, auth, SSE, binding, MCP, terminal, questions, persistence.

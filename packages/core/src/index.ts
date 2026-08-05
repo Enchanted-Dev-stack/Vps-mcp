@@ -62,7 +62,7 @@ export interface HydrationSelection {
 }
 
 function tokensFor(message: ChatMessage): number {
-  return message.estimatedTokens ?? estimateTextTokens(message.content) + 8;
+  return (message.estimatedTokens ?? estimateTextTokens(message.content)) + 8;
 }
 
 /**

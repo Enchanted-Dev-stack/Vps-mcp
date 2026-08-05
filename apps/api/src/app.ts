@@ -2,6 +2,11 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
+import multipart from "@fastify/multipart";
+import staticPlugin from "@fastify/static";
+import { readFile } from "node:fs/promises";
+import type { AttachmentStore } from "@vps-mcp/attachments";
+import type { WorkspaceManager } from "@vps-mcp/workspace";
 import { verify } from "@node-rs/argon2";
 import { z } from "zod";
 import { workspaceModeSchema } from "@vps-mcp/core";
@@ -33,6 +38,9 @@ function parse<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyReply): T 
 export interface ApiOptions {
   db: Database;
   secureCookies?: boolean;
+  attachmentStore?: AttachmentStore;
+  workspaceManager?: WorkspaceManager;
+  staticDir?: string;
 }
 
 export function createApi(options: ApiOptions) {
@@ -41,6 +49,7 @@ export function createApi(options: ApiOptions) {
   const { db } = options;
 
   app.register(cookie);
+  app.register(multipart, { limits: { files: 1, fileSize: options.attachmentStore?.maxBytes ?? 25 * 1024 * 1024 } });
   app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
@@ -141,6 +150,10 @@ export function createApi(options: ApiOptions) {
       instructions: z.string().max(100_000).optional(),
     }), request.body, reply);
     if (!body) return;
+    if (options.workspaceManager) {
+      try { await options.workspaceManager.validateRepository(body.rootPath); }
+      catch (error) { return reply.code(400).send({ error: "repository_invalid", message: error instanceof Error ? error.message : String(error) }); }
+    }
     const workspace = await db.createWorkspace(body);
     return reply.code(201).send(workspace);
   });
@@ -170,12 +183,13 @@ export function createApi(options: ApiOptions) {
     if (!params) return;
     const chat = await db.getChat(params.chatId);
     if (!chat) return reply.code(404).send({ error: "chat_not_found" });
-    const [messages, questions, threadState] = await Promise.all([
+    const [messages, questions, threadState, attachments] = await Promise.all([
       db.listMessages(chat.id),
       db.listOpenQuestions(chat.id),
       db.getThreadState(chat.id),
+      db.listAttachments(chat.id),
     ]);
-    return { ...chat, messages, questions, threadState };
+    return { ...chat, messages, questions, threadState, attachments: attachments.map(({ storagePath: _storagePath, ...attachment }) => attachment) };
   });
 
   app.patch("/api/chats/:chatId", async (request, reply) => {
@@ -193,11 +207,40 @@ export function createApi(options: ApiOptions) {
     const session = await auth(request, reply);
     if (!session || !csrf(request, reply, session)) return;
     const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
-    const body = parse(z.object({ content: z.string().trim().min(1).max(500_000) }), request.body, reply);
+    const body = parse(z.object({ content: z.string().trim().min(1).max(500_000), attachmentIds: z.array(z.string()).max(20).optional() }), request.body, reply);
     if (!params || !body) return;
     if (!(await db.getChat(params.chatId))) return reply.code(404).send({ error: "chat_not_found" });
     const message = await db.appendMessage({ chatId: params.chatId, role: "user", source: "portal", content: body.content });
+    if (body.attachmentIds?.length) await db.linkAttachments(params.chatId, message.id, body.attachmentIds);
     return reply.code(201).send(message);
+  });
+
+  app.post("/api/chats/:chatId/attachments", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    if (!options.attachmentStore) return reply.code(503).send({ error: "attachments_disabled" });
+    const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
+    if (!params) return;
+    if (!(await db.getChat(params.chatId))) return reply.code(404).send({ error: "chat_not_found" });
+    const part = await request.file();
+    if (!part) return reply.code(400).send({ error: "file_required" });
+    const buffer = await part.toBuffer();
+    const stored = await options.attachmentStore.put(buffer, part.filename, part.mimetype);
+    const attachment = await db.createAttachment({ chatId: params.chatId, ...stored });
+    const { storagePath: _storagePath, ...publicAttachment } = attachment;
+    return reply.code(201).send(publicAttachment);
+  });
+
+  app.get("/api/attachments/:attachmentId", async (request, reply) => {
+    if (!(await auth(request, reply))) return;
+    const params = parse(z.object({ attachmentId: z.string().min(1) }), request.params, reply);
+    if (!params) return;
+    const attachment = await db.getAttachment(params.attachmentId);
+    if (!attachment) return reply.code(404).send({ error: "attachment_not_found" });
+    const buffer = await readFile(attachment.storagePath);
+    reply.type(attachment.mimeType);
+    reply.header("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(attachment.originalName)}`);
+    return reply.send(buffer);
   });
 
   app.post("/api/chats/:chatId/bindings", async (request, reply) => {
@@ -280,6 +323,10 @@ export function createApi(options: ApiOptions) {
     if (!(await auth(request, reply))) return;
     return { nonce: randomBytes(16).toString("base64url") };
   });
+
+  if (options.staticDir) {
+    app.register(staticPlugin, { root: options.staticDir, prefix: "/", index: ["index.html"] });
+  }
 
   return app;
 }

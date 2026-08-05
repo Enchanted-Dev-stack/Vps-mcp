@@ -91,6 +91,18 @@ export interface ThreadStateRecord {
   updatedAt: string;
 }
 
+export interface AttachmentRecord {
+  id: string;
+  chatId: string;
+  messageId: string | null;
+  originalName: string;
+  mimeType: string;
+  sha256: string;
+  sizeBytes: number;
+  storagePath: string;
+  createdAt: string;
+}
+
 export interface QuestionRecord {
   id: string;
   chatId: string;
@@ -326,6 +338,26 @@ export class Database {
     return result.rows.map(mapMessage);
   }
 
+  async listMessagesRange(chatId: string, afterSeq = 0, beforeSeq: number | null = null, limit = 200): Promise<MessageRecord[]> {
+    const result = await this.pool.query(
+      `SELECT * FROM messages
+       WHERE chat_id=$1 AND seq>$2 AND ($3::int IS NULL OR seq<=$3)
+       ORDER BY seq ASC LIMIT $4`,
+      [chatId, afterSeq, beforeSeq, limit],
+    );
+    return result.rows.map(mapMessage);
+  }
+
+  async searchMessages(chatId: string, query: string, limit = 20): Promise<MessageRecord[]> {
+    const result = await this.pool.query(
+      `SELECT * FROM messages
+       WHERE chat_id=$1 AND position(lower($2) in lower(content))>0
+       ORDER BY seq ASC LIMIT $3`,
+      [chatId, query, limit],
+    );
+    return result.rows.map(mapMessage);
+  }
+
   async createRun(chatId: string, status: RunStatus = "running"): Promise<RunRecord> {
     const id = createId("run");
     const startedAt = status === "running" ? new Date() : null;
@@ -542,6 +574,82 @@ export class Database {
       structured: row.structured ?? {},
       updatedAt: iso(row.updated_at)!,
     };
+  }
+
+  async createAttachment(input: { chatId: string; originalName: string; mimeType: string; sha256: string; sizeBytes: number; storagePath: string }): Promise<AttachmentRecord> {
+    const id = createId("att");
+    const result = await this.pool.query(
+      `INSERT INTO attachments (id,chat_id,original_name,mime_type,sha256,size_bytes,storage_path)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [id, input.chatId, input.originalName, input.mimeType, input.sha256, input.sizeBytes, input.storagePath],
+    );
+    const row = result.rows[0];
+    return { id: row.id, chatId: row.chat_id, messageId: row.message_id, originalName: row.original_name, mimeType: row.mime_type, sha256: row.sha256, sizeBytes: Number(row.size_bytes), storagePath: row.storage_path, createdAt: iso(row.created_at)! };
+  }
+
+  async linkAttachments(chatId: string, messageId: string, attachmentIds: string[]): Promise<void> {
+    if (!attachmentIds.length) return;
+    await this.pool.query(
+      `UPDATE attachments SET message_id=$2 WHERE chat_id=$1 AND id = ANY($3::text[])`,
+      [chatId, messageId, attachmentIds],
+    );
+  }
+
+  async getAttachment(id: string): Promise<AttachmentRecord | null> {
+    const result = await this.pool.query("SELECT * FROM attachments WHERE id=$1", [id]);
+    if (!result.rowCount) return null;
+    const row = result.rows[0];
+    return { id: row.id, chatId: row.chat_id, messageId: row.message_id, originalName: row.original_name, mimeType: row.mime_type, sha256: row.sha256, sizeBytes: Number(row.size_bytes), storagePath: row.storage_path, createdAt: iso(row.created_at)! };
+  }
+
+  async listAttachments(chatId: string): Promise<AttachmentRecord[]> {
+    const result = await this.pool.query("SELECT * FROM attachments WHERE chat_id=$1 ORDER BY created_at ASC", [chatId]);
+    return result.rows.map((row) => ({ id: row.id, chatId: row.chat_id, messageId: row.message_id, originalName: row.original_name, mimeType: row.mime_type, sha256: row.sha256, sizeBytes: Number(row.size_bytes), storagePath: row.storage_path, createdAt: iso(row.created_at)! }));
+  }
+
+  async storeMcpAccessToken(token: string, ttlMs: number): Promise<{ id: string; expiresAt: string }> {
+    const id = createId("tok");
+    const expiresAt = new Date(Date.now() + ttlMs);
+    await this.pool.query(
+      "INSERT INTO mcp_access_tokens (id,token_hash,expires_at) VALUES ($1,$2,$3)",
+      [id, sha256(token), expiresAt],
+    );
+    return { id, expiresAt: expiresAt.toISOString() };
+  }
+
+  async isMcpAccessTokenValid(token: string): Promise<boolean> {
+    const result = await this.pool.query(
+      "SELECT 1 FROM mcp_access_tokens WHERE token_hash=$1 AND expires_at>now()",
+      [sha256(token)],
+    );
+    return Boolean(result.rowCount);
+  }
+
+  async connectBinding(token: string, agentSessionId: string, leaseTtlMs: number): Promise<{ bindingId: string; chatId: string } | null> {
+    return this.withClient(async (client) => {
+      const binding = await client.query(
+        `SELECT id,chat_id FROM agent_bindings
+         WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now()
+         FOR UPDATE`,
+        [sha256(token)],
+      );
+      if (!binding.rowCount) return null;
+      const row = binding.rows[0];
+      const lease = await client.query(
+        `INSERT INTO agent_leases (chat_id,agent_session_id,expires_at,last_heartbeat)
+         VALUES ($1,$2,now()+($3 * interval '1 millisecond'),now())
+         ON CONFLICT (chat_id) DO UPDATE
+         SET agent_session_id=EXCLUDED.agent_session_id,
+             expires_at=EXCLUDED.expires_at,
+             last_heartbeat=now()
+         WHERE agent_leases.agent_session_id=EXCLUDED.agent_session_id OR agent_leases.expires_at<now()
+         RETURNING chat_id`,
+        [row.chat_id, agentSessionId, leaseTtlMs],
+      );
+      if (!lease.rowCount) return null;
+      await client.query("UPDATE agent_bindings SET consumed_at=now() WHERE id=$1", [row.id]);
+      return { bindingId: row.id, chatId: row.chat_id };
+    });
   }
 
   async withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {

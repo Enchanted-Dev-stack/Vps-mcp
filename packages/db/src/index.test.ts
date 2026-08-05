@@ -134,3 +134,59 @@ describe("thread state", () => {
     expect(await db.listMessages(chat.id)).toHaveLength(1);
   });
 });
+
+describe("MCP persistence", () => {
+  it("stores only hashed access tokens and validates expiry", async () => {
+    await db.storeMcpAccessToken("access-secret", 60_000);
+    expect(await db.isMcpAccessTokenValid("access-secret")).toBe(true);
+    expect(await db.isMcpAccessTokenValid("wrong-secret")).toBe(false);
+    const raw = await db.pool.query("select token_hash from mcp_access_tokens limit 1");
+    expect(raw.rows[0].token_hash).not.toContain("access-secret");
+  });
+
+  it("atomically consumes a binding while claiming the chat lease", async () => {
+    const chat = await seedChat();
+    const a = await db.issueBinding(chat.id, 60_000);
+    const first = await db.connectBinding(a.token, "agent-a", 30_000);
+    expect(first?.chatId).toBe(chat.id);
+    expect(await db.connectBinding(a.token, "agent-a", 30_000)).toBeNull();
+
+    const b = await db.issueBinding(chat.id, 60_000);
+    expect(await db.connectBinding(b.token, "agent-b", 30_000)).toBeNull();
+    // Busy attempts do not burn the token.
+    await db.releaseLease(chat.id, "agent-a");
+    expect((await db.connectBinding(b.token, "agent-b", 30_000))?.chatId).toBe(chat.id);
+  });
+});
+
+describe("attachments metadata", () => {
+  it("links uploaded attachment metadata to a chat message", async () => {
+    const chat = await seedChat();
+    const attachment = await db.createAttachment({
+      chatId: chat.id,
+      originalName: "shot.png",
+      mimeType: "image/png",
+      sha256: "a".repeat(64),
+      sizeBytes: 123,
+      storagePath: "/tmp/hash",
+    });
+    const message = await db.appendMessage({ chatId: chat.id, role: "user", source: "portal", content: "See screenshot" });
+    await db.linkAttachments(chat.id, message.id, [attachment.id]);
+    const listed = await db.listAttachments(chat.id);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].messageId).toBe(message.id);
+    expect((await db.getAttachment(attachment.id))?.originalName).toBe("shot.png");
+  });
+});
+
+describe("history retrieval", () => {
+  it("searches canonical older messages without changing stored history", async () => {
+    const chat = await seedChat();
+    await db.appendMessage({ chatId: chat.id, role: "user", source: "portal", content: "We chose iframe isolation for previews" });
+    await db.appendMessage({ chatId: chat.id, role: "assistant", source: "agent", content: "Acknowledged" });
+    await db.appendMessage({ chatId: chat.id, role: "user", source: "portal", content: "Now work on toolbar" });
+    expect((await db.searchMessages(chat.id, "iframe", 10)).map(m => m.seq)).toEqual([1]);
+    expect((await db.listMessagesRange(chat.id, 1, 2, 20)).map(m => m.seq)).toEqual([2]);
+    expect(await db.listMessages(chat.id)).toHaveLength(3);
+  });
+});

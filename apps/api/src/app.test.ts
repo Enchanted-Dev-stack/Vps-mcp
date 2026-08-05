@@ -62,3 +62,48 @@ describe("portal API", () => {
     await app.close();
   });
 });
+
+describe("SSE replay", () => {
+  it("replays only events after the requested cursor", async () => {
+    const ws = await db.createWorkspace({ name: "SSE", rootPath: "/tmp/sse" });
+    const chat = await db.createChat({ workspaceId: ws.id, title: "Stream", mode: "plan" });
+    const first = await db.appendEvent({ chatId: chat.id, type: "activity", payload: { message: "one" } });
+    const app = createApi({ db, secureCookies: false });
+    const auth = await login(app);
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === "string") throw new Error("bad listen address");
+    const port = address.port;
+
+    async function readOne(after: number) {
+      const controller = new AbortController();
+      const response = await fetch(`http://127.0.0.1:${port}/api/chats/${chat.id}/events/stream?after=${after}`, {
+        headers: { cookie: auth.cookies }, signal: controller.signal,
+      });
+      expect(response.status).toBe(200);
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+      try {
+        while (!text.includes("\n\n")) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          text += decoder.decode(chunk.value, { stream: true });
+          if (text.includes("id:")) break;
+        }
+      } finally {
+        controller.abort();
+        await reader.cancel().catch(() => undefined);
+      }
+      return text;
+    }
+
+    const replay = await readOne(0);
+    expect(replay).toContain(`id: ${first.seq}`);
+    const second = await db.appendEvent({ chatId: chat.id, type: "activity", payload: { message: "two" } });
+    const resumed = await readOne(first.seq);
+    expect(resumed).toContain(`id: ${second.seq}`);
+    expect(resumed).not.toContain(`id: ${first.seq}\n`);
+    await app.close();
+  });
+});
