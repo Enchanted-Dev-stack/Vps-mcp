@@ -88,7 +88,7 @@ test("Codex-style portal happy path", async ({ page, context }) => {
 
   await page.getByRole("button", { name: /Connect/ }).click();
   await expect(page.getByRole("heading", { name: "Connect ChatGPT" })).toBeVisible();
-  await expect(page.locator(".binding-code code")).toContainText("connect to bind_");
+  await expect(page.locator(".binding-code code")).toContainText("connect to bind-");
   await page.locator(".modal .icon-btn").click();
 
   await page.getByRole("button", { name: "Build", exact: true }).click();

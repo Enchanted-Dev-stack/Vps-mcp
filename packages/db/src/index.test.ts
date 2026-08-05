@@ -69,6 +69,8 @@ describe("binding tokens", () => {
   it("can be consumed exactly once", async () => {
     const chat = await seedChat();
     const binding = await db.issueBinding(chat.id, 60_000);
+    expect(binding.token).toMatch(/^bind-(?:[a-z]+-){4}\d{6}$/);
+    expect(binding.token).not.toMatch(/[A-Za-z0-9_]{20,}/);
     const first = await db.consumeBinding(binding.token);
     const replay = await db.consumeBinding(binding.token);
     expect(first?.chatId).toBe(chat.id);

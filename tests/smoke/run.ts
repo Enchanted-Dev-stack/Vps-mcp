@@ -107,7 +107,7 @@ try {
   step("image upload, hashing, metadata + message linkage");
 
   const binding = await api<any>(`/api/chats/${chatId}/bindings`, { method: "POST" });
-  assert(binding.token?.startsWith("bind_"), "binding token missing"); step("one-time chat binding issued");
+  assert(/^bind-(?:[a-z]+-){4}\d{6}$/.test(binding.token ?? ""), "binding token missing"); step("one-time chat binding issued");
 
   const verifier = randomBytes(48).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");

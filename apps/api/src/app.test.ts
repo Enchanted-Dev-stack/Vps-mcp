@@ -41,7 +41,7 @@ describe("portal API", () => {
     expect(msgRes.statusCode).toBe(201);
     const bindingRes = await app.inject({ method: "POST", url: `/api/chats/${chat.id}/bindings`, headers: { cookie: auth.cookies, "x-csrf-token": auth.csrf } });
     expect(bindingRes.statusCode).toBe(201);
-    expect(bindingRes.json().token).toMatch(/^bind_/);
+    expect(bindingRes.json().token).toMatch(/^bind-(?:[a-z]+-){4}\d{6}$/);
     const detail = await app.inject({ method: "GET", url: `/api/chats/${chat.id}`, headers: { cookie: auth.cookies } });
     expect(detail.json().messages).toHaveLength(1);
     await app.close();

@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -14,6 +14,23 @@ import {
 } from "@vps-mcp/core";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+const bindingWords = [
+  "amber", "apple", "atlas", "birch", "bloom", "blue", "cedar", "cloud",
+  "coral", "dawn", "delta", "ember", "fern", "field", "flint", "forest",
+  "frost", "gold", "harbor", "hazel", "hill", "iris", "jade", "lake",
+  "leaf", "light", "lilac", "lunar", "maple", "meadow", "mint", "moon",
+  "north", "oak", "ocean", "olive", "opal", "orchid", "pearl", "pine",
+  "plum", "pond", "quartz", "rain", "reed", "river", "rose", "sage",
+  "sand", "sky", "snow", "solar", "south", "spruce", "stone", "sun",
+  "teal", "tide", "vale", "violet", "west", "willow", "wind", "wood",
+] as const;
+
+function createBindingToken(): string {
+  const words = Array.from({ length: 4 }, () => bindingWords[randomInt(bindingWords.length)]);
+  const digits = String(randomInt(1_000_000)).padStart(6, "0");
+  return `bind-${words.join("-")}-${digits}`;
+}
 
 export interface WorkspaceRecord {
   id: string;
@@ -490,7 +507,7 @@ export class Database {
 
   async issueBinding(chatId: string, ttlMs = 10 * 60_000): Promise<{ id: string; chatId: string; token: string; expiresAt: string }> {
     const id = createId("bind");
-    const token = `bind_${randomBytes(32).toString("base64url")}`;
+    const token = createBindingToken();
     const expiresAt = new Date(Date.now() + ttlMs);
     await this.pool.query(
       "INSERT INTO agent_bindings (id,chat_id,token_hash,expires_at) VALUES ($1,$2,$3,$4)",
