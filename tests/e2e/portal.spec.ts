@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { test, expect } from "@playwright/test";
 
+const adminUsername = process.env.E2E_ADMIN_USERNAME ?? "admin";
 const adminPassword = process.env.E2E_ADMIN_PASSWORD ?? "";
 const repoRoot = process.env.E2E_REPO_ROOT ?? "/data/vps-mcp/smoke";
 if (!adminPassword) throw new Error("E2E_ADMIN_PASSWORD is required");
@@ -41,7 +42,7 @@ test("Codex-style portal happy path", async ({ page, context }) => {
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "VPS Agent" })).toBeVisible();
-  await page.getByLabel("Username").fill("admin");
+  await page.getByLabel("Username").fill(adminUsername);
   await page.getByLabel("Password").fill(adminPassword);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.locator(".sidebar")).toBeVisible();
@@ -56,9 +57,11 @@ test("Codex-style portal happy path", async ({ page, context }) => {
   for (const folder of ["vps-mcp", "smoke", basename(repoParent)]) {
     await page.locator(".repo-open").filter({ hasText: folder }).click();
   }
-  const workspaceRow = page.locator(".repo-row").filter({ hasText: "repo" });
-  await workspaceRow.getByRole("button", { name: "Select" }).click();
-  await expect(page.getByLabel("Workspace folder")).toHaveValue(repo);
+  await page.getByLabel("New folder name").fill("portal-workspace");
+  await page.getByRole("button", { name: "Create folder" }).click();
+  await expect(page.locator(".repo-picker-head b")).toContainText("portal-workspace");
+  await page.getByRole("button", { name: "Use this folder" }).click();
+  await expect(page.getByLabel("Workspace folder")).toHaveValue(join(repoParent, "portal-workspace"));
   await page.getByLabel("Project instructions").fill("Keep tests green. This is a browser E2E workspace.");
   await page.getByRole("button", { name: "Create workspace" }).click();
   await expect(page.locator(".workspace-select")).toContainText(workspaceName);

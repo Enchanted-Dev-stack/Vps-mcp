@@ -32,6 +32,8 @@ await app.listen({ host, port });
 console.log(`portal-api listening on ${host}:${port}`);
 
 const shutdown = async () => {
+  app.server.closeAllConnections?.();
+  app.server.closeIdleConnections?.();
   await app.close();
   await db.close();
   process.exit(0);

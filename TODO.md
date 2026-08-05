@@ -140,4 +140,4 @@ This file is the canonical implementation checklist. Update it as work is comple
 - [x] Active `chat_terminal` process group is killed server-side promptly after cancellation request.
 - [x] Cancellation is checked before starting subsequent agent actions.
 - [x] Cancelled run emits durable events/status and the agent remains connected for new instructions.
-- [ ] Unit/integration/protocol/smoke/E2E coverage for wait + interrupt + workspace-folder semantics.
+- [x] Unit/integration/protocol/smoke/E2E coverage for wait + interrupt + workspace-folder semantics.
