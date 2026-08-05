@@ -25,6 +25,25 @@ export interface WorktreeResult {
 export class WorkspaceManager {
   constructor(readonly worktreeRoot: string) {}
 
+  async validateWorkspaceRoot(rootPath: string): Promise<{ root: string; isGitRepository: boolean; branch: string | null; hasCommit: boolean }> {
+    const root = await realpath(rootPath);
+    const info = await stat(root);
+    if (!info.isDirectory()) throw new Error(`${root} is not a directory`);
+    await access(root, constants.R_OK | constants.W_OK | constants.X_OK);
+    try {
+      const inside = await git(root, ["rev-parse", "--is-inside-work-tree"]);
+      if (inside === "true") {
+        const top = await git(root, ["rev-parse", "--show-toplevel"]);
+        if (resolve(top) === resolve(root)) {
+          const branch = await git(root, ["branch", "--show-current"]);
+          const hasCommit = await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], { cwd: root }).then(() => true).catch(() => false);
+          return { root, isGitRepository: true, branch: branch || null, hasCommit };
+        }
+      }
+    } catch {}
+    return { root, isGitRepository: false, branch: null, hasCommit: false };
+  }
+
   async validateRepository(repoPath: string): Promise<{ root: string; branch: string }> {
     const root = await realpath(repoPath);
     await access(root, constants.R_OK | constants.X_OK);

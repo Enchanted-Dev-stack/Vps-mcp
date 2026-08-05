@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -73,4 +73,18 @@ it("returns status and textual diff for a managed worktree", async () => {
   expect(result.short).toContain("M same.txt");
   expect(result.diffStat).toContain("same.txt");
   expect(result.diff).toContain("-BEFORE"); expect(result.diff).toContain("+AFTER");
+});
+
+describe("workspace folder semantics", () => {
+  it("accepts a normal non-Git directory as a workspace root", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "workspace-root-"));
+    const root = join(parent, "project");
+    await mkdir(root);
+    await writeFile(join(root, "notes.txt"), "hello\n");
+    const manager = new WorkspaceManager(join(parent, "worktrees"));
+    const validated = await manager.validateWorkspaceRoot(root);
+    expect(validated.root).toBe(await realpath(root));
+    expect(validated.isGitRepository).toBe(false);
+    await rm(parent, { recursive: true, force: true });
+  });
 });

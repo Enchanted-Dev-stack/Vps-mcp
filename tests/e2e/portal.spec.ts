@@ -51,14 +51,14 @@ test("Codex-style portal happy path", async ({ page, context }) => {
   if (await newWorkspace.isVisible().catch(() => false)) await newWorkspace.click();
   await page.getByLabel("Name").fill(workspaceName);
   await page.getByRole("button", { name: "Browse VPS" }).click();
-  await expect(page.getByRole("heading", { name: "Select repository" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Select workspace folder" })).toBeVisible();
   await page.locator(".repo-list > button").filter({ hasText: "/data" }).click();
   for (const folder of ["vps-mcp", "smoke", basename(repoParent)]) {
     await page.locator(".repo-open").filter({ hasText: folder }).click();
   }
-  const repositoryRow = page.locator(".repo-row").filter({ hasText: "Git repository" }).filter({ hasText: "repo" });
-  await repositoryRow.getByRole("button", { name: "Select" }).click();
-  await expect(page.getByLabel("Project repository")).toHaveValue(repo);
+  const workspaceRow = page.locator(".repo-row").filter({ hasText: "repo" });
+  await workspaceRow.getByRole("button", { name: "Select" }).click();
+  await expect(page.getByLabel("Workspace folder")).toHaveValue(repo);
   await page.getByLabel("Project instructions").fill("Keep tests green. This is a browser E2E workspace.");
   await page.getByRole("button", { name: "Create workspace" }).click();
   await expect(page.locator(".workspace-select")).toContainText(workspaceName);

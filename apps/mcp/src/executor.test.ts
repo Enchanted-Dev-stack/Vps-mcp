@@ -20,3 +20,14 @@ describe("executor safety limits", () => {
     expect(result.exitCode).toBe(0);
   });
 });
+
+it("kills a running process promptly when its abort signal is triggered", async () => {
+  const controller = new AbortController();
+  const started = Date.now();
+  const pending = executeCommand("sleep 30", { timeoutMs: 30_000, signal: controller.signal });
+  setTimeout(() => controller.abort(), 150);
+  const result = await pending;
+  expect(result.cancelled).toBe(true);
+  expect(result.exitCode).toBe(130);
+  expect(Date.now() - started).toBeLessThan(2_000);
+});

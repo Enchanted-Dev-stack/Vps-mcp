@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 
-export interface ExecuteResult { stdout: string; stderr: string; exitCode: number | null; timedOut: boolean; }
+export interface ExecuteResult { stdout: string; stderr: string; exitCode: number | null; timedOut: boolean; cancelled: boolean; }
 export interface ExecuteOptions {
   cwd?: string;
   timeoutMs?: number;
   maxOutputBytes?: number;
   onStdout?: (chunk: string) => Promise<void> | void;
   onStderr?: (chunk: string) => Promise<void> | void;
+  signal?: AbortSignal;
 }
 
 export async function executeCommand(command: string, options: ExecuteOptions = {}): Promise<ExecuteResult> {
@@ -16,6 +17,7 @@ export async function executeCommand(command: string, options: ExecuteOptions = 
   const stderr: Buffer[] = [];
   let captured = 0;
   let timedOut = false;
+  let cancelled = false;
   let eventQueue = Promise.resolve();
 
   return await new Promise<ExecuteResult>((resolve) => {
@@ -41,32 +43,41 @@ export async function executeCommand(command: string, options: ExecuteOptions = 
     child.stdout.on("data", (chunk: Buffer) => capture(stdout, chunk, options.onStdout));
     child.stderr.on("data", (chunk: Buffer) => capture(stderr, chunk, options.onStderr));
 
+    const killGroup = () => { try { process.kill(-child.pid!, "SIGKILL"); } catch { child.kill("SIGKILL"); } };
+    const onAbort = () => { cancelled = true; killGroup(); };
+    if (options.signal?.aborted) onAbort(); else options.signal?.addEventListener("abort", onAbort, { once: true });
+
     const timer = setTimeout(() => {
       timedOut = true;
-      try { process.kill(-child.pid!, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+      killGroup();
     }, timeoutMs);
 
     child.on("error", async (error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
       await eventQueue;
-      resolve({ stdout: "", stderr: error.message, exitCode: null, timedOut: false });
+      options.signal?.removeEventListener("abort", onAbort);
+      resolve({ stdout: "", stderr: error.message, exitCode: null, timedOut: false, cancelled });
     });
 
     child.on("close", async (exitCode) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
       await eventQueue;
       let stderrText = Buffer.concat(stderr).toString("utf8");
       if (timedOut) stderrText += `\n[terminated after ${timeoutMs} ms]`;
+      if (cancelled) stderrText += `\n[cancelled by user]`;
       if (captured >= maxOutputBytes) stderrText += `\n[output truncated at ${maxOutputBytes} bytes]`;
       resolve({
         stdout: Buffer.concat(stdout).toString("utf8"),
         stderr: stderrText,
-        exitCode: timedOut ? 124 : exitCode,
+        exitCode: timedOut ? 124 : cancelled ? 130 : exitCode,
         timedOut,
+        cancelled,
       });
     });
   });

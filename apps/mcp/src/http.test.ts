@@ -43,7 +43,7 @@ describe("MCP HTTP", () => {
     const client = new Client({ name: "test", version: "1.0.0" });
     await client.connect(transport);
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name);
-    expect(toolNames).toEqual(expect.arrayContaining(["terminal", "chat_connect", "chat_sync", "chat_ask", "chat_terminal", "chat_complete"]));
+    expect(toolNames).toEqual(expect.arrayContaining(["terminal", "chat_connect", "chat_sync", "chat_wait", "chat_ask", "chat_terminal", "chat_complete"]));
 
     const legacyBeforeBinding = await client.callTool({ name: "terminal", arguments: { command: "printf legacy-ok" } });
     expect(legacyBeforeBinding.isError).not.toBe(true);

@@ -126,12 +126,19 @@ try {
   const transport = new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${oauth.access_token}` } } });
   client = new Client({ name: "vps-mcp-smoke", version: "1.0.0" }); await client.connect(transport);
   const toolNames = (await client.listTools()).tools.map((tool) => tool.name);
-  for (const required of ["terminal", "chat_connect", "chat_sync", "chat_ask", "chat_terminal", "chat_attachment", "chat_complete"]) assert(toolNames.includes(required), `missing MCP tool ${required}`);
+  for (const required of ["terminal", "chat_connect", "chat_sync", "chat_wait", "chat_ask", "chat_terminal", "chat_attachment", "chat_complete"]) assert(toolNames.includes(required), `missing MCP tool ${required}`);
   step("official MCP client connection + tool discovery");
 
   const connected = await client.callTool({ name: "chat_connect", arguments: { binding_code: binding.token } }); assert(!connected.isError, "chat_connect failed");
   const connectedBody = toolJson(connected); assert(connectedBody.context.messages.length === 2, "chat hydration did not include full verbatim history"); step("chat binding + full context hydration");
   const sse = await readOneSse(chatId, 0); assert(sse.includes("event: agent.connected"), "public SSE did not replay agent.connected"); step("public SSE event replay");
+
+  const waiting = client.callTool({ name: "chat_wait", arguments: { timeout_ms: 5_000 } });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  await api(`/api/chats/${chatId}/messages`, { method: "POST", body: JSON.stringify({ content: "Message delivered while chat_wait was parked." }) });
+  const waited = toolJson(await waiting);
+  assert(waited.status === "update" && waited.messages.some((message: any) => message.content.includes("delivered while chat_wait")), "chat_wait did not wake for portal message");
+  step("chat_wait wakes on portal message without reconnecting");
 
   const image = await client.callTool({ name: "chat_attachment", arguments: { attachment_id: attachment.id } });
   assert(!image.isError && (image.content as any[])[0]?.type === "image", "MCP image attachment delivery failed"); step("MCP image attachment delivery");
@@ -144,6 +151,18 @@ try {
   const sync = toolJson(await client.callTool({ name: "chat_sync", arguments: {} })); assert(sync.events.some((event: any) => event.type === "question.answered"), "question answer not visible to agent sync"); step("structured portal Q&A round trip");
 
   await api(`/api/chats/${chatId}`, { method: "PATCH", body: JSON.stringify({ mode: "build" }) });
+  const longCommand = client.callTool({ name: "chat_terminal", arguments: { command: "sleep 30", timeout: 30_000 } });
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  await api(`/api/chats/${chatId}/interrupt`, { method: "POST", body: JSON.stringify({ reason: "smoke stop" }) });
+  const stopped = toolJson(await longCommand);
+  assert(stopped.cancelled === true && stopped.exitCode === 130, "portal Stop did not cancel the active command");
+  const waitAfterStop = client.callTool({ name: "chat_wait", arguments: { timeout_ms: 5_000 } });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await api(`/api/chats/${chatId}/messages`, { method: "POST", body: JSON.stringify({ content: "Continue after stop." }) });
+  const resumed = toolJson(await waitAfterStop);
+  assert(resumed.status === "update", "chat did not remain connected after Stop");
+  step("portal Stop cancels active process while chat remains connected");
+
   const build = await client.callTool({ name: "chat_terminal", arguments: { command: "printf 'smoke-build\\n' > smoke.txt && git status --short" } }); assert(!build.isError, "Build command failed");
   const detail = await api<any>(`/api/chats/${chatId}`); worktreePath = detail.worktreePath; assert(worktreePath, "Build chat did not receive a worktree");
   await access(join(worktreePath, "smoke.txt"));

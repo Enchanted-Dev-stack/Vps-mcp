@@ -177,3 +177,38 @@ describe("repository browser", () => {
     }
   });
 });
+
+describe("workspace folder browser", () => {
+  it("creates and selects a non-Git workspace folder under an allowed root", async () => {
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = await mkdtemp(join(tmpdir(), "portal-workspace-root-"));
+    const app = await createApi({ db, secureCookies: false, repositoryBrowseRoots: [root] });
+    const auth = await login(app);
+    const headers = { cookie: auth.cookies, "x-csrf-token": auth.csrf };
+    const created = await app.inject({ method: "POST", url: "/api/repositories/folders", headers, payload: { parentPath: root, name: "new-project" } });
+    expect(created.statusCode).toBe(201);
+    const folder = created.json();
+    const ws = await app.inject({ method: "POST", url: "/api/workspaces", headers, payload: { name: "New project", rootPath: folder.path } });
+    expect(ws.statusCode).toBe(201);
+    expect(ws.json().rootPath).toBe(folder.path);
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("portal interruption", () => {
+  it("requests cancellation for the active run without touching the chat lease", async () => {
+    const ws = await db.createWorkspace({ name: "Interrupt", rootPath: "/tmp" });
+    const chat = await db.createChat({ workspaceId: ws.id, title: "Running", mode: "build" });
+    const run = await db.createRun(chat.id);
+    const app = await createApi({ db, secureCookies: false });
+    const auth = await login(app);
+    const response = await app.inject({ method: "POST", url: `/api/chats/${chat.id}/interrupt`, headers: { cookie: auth.cookies, "x-csrf-token": auth.csrf }, payload: { reason: "stop test" } });
+    expect(response.statusCode).toBe(202);
+    expect(response.json().runId).toBe(run.id);
+    expect(await db.getPendingInterrupt(run.id)).toMatchObject({ reason: "stop test" });
+    await app.close();
+  });
+});

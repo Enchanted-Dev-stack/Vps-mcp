@@ -161,5 +161,7 @@ export const eventTypeSchema = z.enum([
   "question.answered",
   "run.completed",
   "run.failed",
+  "run.interrupt.requested",
+  "run.cancelled",
 ]);
 export type EventType = z.infer<typeof eventTypeSchema>;

@@ -5,7 +5,7 @@ export interface Message { id:string; chatId:string; seq:number; role:"system"|"
 export interface Question { id:string; chatId:string; runId:string|null; kind:"text"|"single_choice"|"multi_choice"|"confirm"; prompt:string; options:string[]; allowMultiple:boolean; status:string; answer:unknown; createdAt:string; }
 export interface RunEvent { id:string; chatId:string; runId:string|null; seq:number; type:string; payload:Record<string,unknown>; createdAt:string; }
 export interface Attachment { id:string; chatId:string; messageId:string|null; originalName:string; mimeType:string; sha256:string; sizeBytes:number; createdAt:string; }
-export interface ChatDetail extends Chat { messages:Message[]; questions:Question[]; attachments:Attachment[]; threadState:{summary:string; structured:Record<string,unknown>}|null; }
+export interface ChatDetail extends Chat { messages:Message[]; questions:Question[]; attachments:Attachment[]; threadState:{summary:string; structured:Record<string,unknown>}|null; activeRun:{id:string;status:string}|null; }
 
 export interface RepositoryBrowserEntry { name:string; path:string; isGitRepository:boolean; }
 export interface RepositoryBrowserResult { currentPath:string|null; parentPath:string|null; isGitRepository:boolean; roots:{name:string;path:string;isGitRepository?:boolean}[]; entries:RepositoryBrowserEntry[]; }

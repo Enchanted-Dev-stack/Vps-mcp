@@ -14,7 +14,7 @@ The existing `/opt/terminal-mcp` remains live as a rollback/control connector un
 ## Identity hierarchy
 `workspace -> chat -> run -> event`.
 
-- Workspace: repository/project-level instructions and shared state.
+- Workspace: project folder/root-level instructions and shared state; Git is optional.
 - Chat: isolated conversation, mode, agent lease, worktree and full history.
 - Run: one unit of agent execution.
 - Event: durable activity stream item.

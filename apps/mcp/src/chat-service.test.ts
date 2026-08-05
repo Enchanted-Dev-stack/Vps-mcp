@@ -165,3 +165,47 @@ describe("large canonical history", () => {
     await bounded.disconnect(secondSession);
   });
 });
+
+describe("live wait and interruption", () => {
+  it("waits for a portal message and returns it without reconnecting", async () => {
+    const seeded = await seed("plan");
+    const session = createAgentSession();
+    await service.connect(session, seeded.binding.token);
+    const waiting = service.wait(session, 5_000);
+    setTimeout(() => { void db.appendMessage({ chatId: seeded.chat.id, role: "user", source: "portal", content: "arrived while waiting" }); }, 250);
+    const result = await waiting;
+    expect(result.status).toBe("update");
+    if (result.status === "update") expect(result.messages.map((m) => m.content)).toContain("arrived while waiting");
+    expect(session.chatId).toBe(seeded.chat.id);
+  });
+
+  it("stops an active terminal promptly and keeps the chat connected", async () => {
+    const seeded = await seed("build");
+    const session = createAgentSession();
+    await service.connect(session, seeded.binding.token);
+    const command = service.terminal(session, "sleep 30", undefined, 30_000);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const interrupt = await db.requestInterrupt(seeded.chat.id, "user changed direction");
+    expect(interrupt).toBeTruthy();
+    const result = await command;
+    expect(result.cancelled).toBe(true);
+    expect(result.exitCode).toBe(130);
+    expect(session.chatId).toBe(seeded.chat.id);
+    expect(session.runId).toBeNull();
+    expect((await db.listEvents(seeded.chat.id)).some((event) => event.type === "run.cancelled")).toBe(true);
+  });
+
+  it("uses a non-Git workspace folder directly in Build mode", async () => {
+    const folder = join(root, `plain-${Date.now()}`);
+    execFileSync("mkdir", ["-p", folder]);
+    const ws = await db.createWorkspace({ name: "Plain", rootPath: folder, defaultBranch: "main" });
+    const chat = await db.createChat({ workspaceId: ws.id, title: "Create project", mode: "build" });
+    const binding = await db.issueBinding(chat.id, 60_000);
+    const session = createAgentSession();
+    const connected = await service.connect(session, binding.token);
+    expect(connected.chat.worktreePath).toBeNull();
+    const result = await service.terminal(session, "pwd && printf 'created' > hello.txt");
+    expect(result.stdout.trim()).toBe(folder);
+    expect(await import("node:fs/promises").then(({ readFile }) => readFile(join(folder, "hello.txt"), "utf8"))).toBe("created");
+  });
+});

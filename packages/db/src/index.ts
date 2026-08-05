@@ -207,26 +207,23 @@ function mapQuestion(row: any): QuestionRecord {
 
 export async function migrate(pool: Pool): Promise<void> {
   // src/ during development => ../migrations; dist/ after build => ../migrations copied by package build/deploy.
-  const candidates = [
-    join(here, "../migrations/001_init.sql"),
-    join(here, "../../migrations/001_init.sql"),
-  ];
-  let sql: string | undefined;
-  for (const candidate of candidates) {
-    try {
-      sql = await readFile(candidate, "utf8");
-      break;
-    } catch {
-      // Try the next location.
+  const migrationNames = ["001_init.sql", "002_interrupts.sql"];
+  const migrationSql: string[] = [];
+  for (const name of migrationNames) {
+    const candidates = [join(here, `../migrations/${name}`), join(here, `../../migrations/${name}`)];
+    let sql: string | undefined;
+    for (const candidate of candidates) {
+      try { sql = await readFile(candidate, "utf8"); break; } catch {}
     }
+    if (!sql) throw new Error(`Unable to locate DB migration ${name}`);
+    migrationSql.push(sql);
   }
-  if (!sql) throw new Error("Unable to locate DB migration 001_init.sql");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     // Serialize schema bootstrap across API/MCP processes starting simultaneously.
     await client.query("SELECT pg_advisory_xact_lock($1)", [827_461_903]);
-    await client.query(sql);
+    for (const sql of migrationSql) await client.query(sql);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -239,7 +236,7 @@ export async function migrate(pool: Pool): Promise<void> {
 export async function resetForTests(pool: Pool): Promise<void> {
   await pool.query(`
     TRUNCATE TABLE
-      audit_log, mcp_access_tokens, attachments, thread_state, agent_leases,
+      audit_log, mcp_access_tokens, attachments, thread_state, agent_leases, run_interrupts,
       agent_bindings, questions, run_events, runs, messages, chats, workspaces,
       portal_sessions, users
     RESTART IDENTITY CASCADE
@@ -413,6 +410,39 @@ export class Database {
       [id, chatId, status, startedAt],
     );
     return mapRun(result.rows[0]);
+  }
+
+  async getActiveRun(chatId: string): Promise<RunRecord | null> {
+    const result = await this.pool.query(
+      `SELECT * FROM runs WHERE chat_id=$1 AND status IN ('running','waiting') ORDER BY created_at DESC LIMIT 1`,
+      [chatId],
+    );
+    return result.rowCount ? mapRun(result.rows[0]) : null;
+  }
+
+  async requestInterrupt(chatId: string, reason = "User requested stop"): Promise<{ runId: string; chatId: string; reason: string } | null> {
+    const result = await this.pool.query(
+      `WITH target AS (
+         SELECT id,chat_id FROM runs WHERE chat_id=$1 AND status IN ('running','waiting') ORDER BY created_at DESC LIMIT 1
+       )
+       INSERT INTO run_interrupts (run_id,chat_id,reason,requested_at,acknowledged_at)
+       SELECT id,chat_id,$2,now(),NULL FROM target
+       ON CONFLICT (run_id) DO UPDATE SET reason=EXCLUDED.reason,requested_at=now(),acknowledged_at=NULL
+       RETURNING run_id,chat_id,reason`,
+      [chatId, reason],
+    );
+    return result.rowCount ? { runId: result.rows[0].run_id, chatId: result.rows[0].chat_id, reason: result.rows[0].reason } : null;
+  }
+
+  async getPendingInterrupt(runId: string): Promise<{ reason: string; requestedAt: string } | null> {
+    const result = await this.pool.query(
+      `SELECT reason,requested_at FROM run_interrupts WHERE run_id=$1 AND acknowledged_at IS NULL`, [runId],
+    );
+    return result.rowCount ? { reason: result.rows[0].reason, requestedAt: iso(result.rows[0].requested_at)! } : null;
+  }
+
+  async acknowledgeInterrupt(runId: string): Promise<void> {
+    await this.pool.query(`UPDATE run_interrupts SET acknowledged_at=now() WHERE run_id=$1 AND acknowledged_at IS NULL`, [runId]);
   }
 
   async updateRun(id: string, status: RunStatus, error?: string | null): Promise<RunRecord | null> {

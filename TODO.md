@@ -131,13 +131,13 @@ This file is the canonical implementation checklist. Update it as work is comple
 - [ ] Chat fork/merge/review UX.
 
 ## Phase 12 — workspace folders + live wait/interrupt
-- [ ] Workspace selects/creates a server folder, not necessarily an existing Git repository.
-- [ ] Workspace root becomes the default cwd for connected agents.
-- [ ] Git-backed Build chats keep per-chat worktree isolation; non-Git workspace roots remain usable directly.
-- [ ] VPS folder browser can create/select workspace folders under approved roots.
-- [ ] `chat_wait(timeout_ms?)` long-polls for portal messages/attachments/events while renewing the lease.
-- [ ] Portal Stop button requests cancellation without disconnecting the chat.
-- [ ] Active `chat_terminal` process group is killed server-side promptly after cancellation request.
-- [ ] Cancellation is checked before starting subsequent agent actions.
-- [ ] Cancelled run emits durable events/status and the agent remains connected for new instructions.
+- [x] Workspace selects/creates a server folder, not necessarily an existing Git repository.
+- [x] Workspace root becomes the default cwd for connected agents.
+- [x] Git-backed Build chats keep per-chat worktree isolation; non-Git workspace roots remain usable directly.
+- [x] VPS folder browser can create/select workspace folders under approved roots.
+- [x] `chat_wait(timeout_ms?)` long-polls for portal messages/attachments/events while renewing the lease.
+- [x] Portal Stop button requests cancellation without disconnecting the chat.
+- [x] Active `chat_terminal` process group is killed server-side promptly after cancellation request.
+- [x] Cancellation is checked before starting subsequent agent actions.
+- [x] Cancelled run emits durable events/status and the agent remains connected for new instructions.
 - [ ] Unit/integration/protocol/smoke/E2E coverage for wait + interrupt + workspace-folder semantics.

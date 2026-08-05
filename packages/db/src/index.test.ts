@@ -228,3 +228,16 @@ describe("migration startup concurrency", () => {
     }
   });
 });
+
+describe("run interruption", () => {
+  it("targets only the active run and can be acknowledged without disconnecting the chat", async () => {
+    const chat = await seedChat();
+    const run = await db.createRun(chat.id);
+    const request = await db.requestInterrupt(chat.id, "stop now");
+    expect(request).toMatchObject({ runId: run.id, chatId: chat.id, reason: "stop now" });
+    expect(await db.getPendingInterrupt(run.id)).toMatchObject({ reason: "stop now" });
+    await db.acknowledgeInterrupt(run.id);
+    expect(await db.getPendingInterrupt(run.id)).toBeNull();
+    expect((await db.getActiveRun(chat.id))?.id).toBe(run.id);
+  });
+});

@@ -88,6 +88,42 @@ export class ChatAgentService {
     return run.id;
   }
 
+  private async consumeInterrupt(session: AgentSession): Promise<string | null> {
+    if (!session.runId) return null;
+    const pending = await this.db.getPendingInterrupt(session.runId);
+    if (!pending) return null;
+    const chatId = this.requireConnected(session);
+    const runId = session.runId;
+    await this.db.acknowledgeInterrupt(runId);
+    await this.db.updateRun(runId, "cancelled", pending.reason);
+    const event = await this.db.appendEvent({ chatId, runId, type: "run.cancelled", payload: { reason: pending.reason } });
+    session.eventCursor = Math.max(session.eventCursor, event.seq);
+    session.runId = null;
+    return pending.reason;
+  }
+
+  private async assertNotInterrupted(session: AgentSession): Promise<void> {
+    const reason = await this.consumeInterrupt(session);
+    if (reason) throw new Error(`Run cancelled by user: ${reason}`);
+  }
+
+  private async buildScope(chat: Awaited<ReturnType<Database["getChat"]>> & {}, workspace: Awaited<ReturnType<Database["getWorkspace"]>> & {}) {
+    const rootInfo = await this.workspaces.validateWorkspaceRoot(workspace.rootPath);
+    if (chat.branch === "__workspace_root__" || !rootInfo.isGitRepository || !rootInfo.hasCommit) {
+      if (chat.branch !== "__workspace_root__") {
+        await this.db.updateChatWorktree(chat.id, "__workspace_root__", null);
+        chat = (await this.db.getChat(chat.id))!;
+      }
+      return { chat, scope: rootInfo.root, isolated: false };
+    }
+    if (!chat.worktreePath) {
+      const wt = await this.workspaces.ensureWorktree({ repoPath: workspace.rootPath, chatId: chat.id, baseBranch: workspace.defaultBranch });
+      await this.db.updateChatWorktree(chat.id, wt.branch, wt.path);
+      chat = (await this.db.getChat(chat.id))!;
+    }
+    return { chat, scope: chat.worktreePath!, isolated: true };
+  }
+
   async connect(session: AgentSession, bindingCode: string) {
     if (session.chatId) throw new Error("This MCP session is already connected to a portal chat.");
     const claimed = await this.db.connectBinding(bindingCode, session.agentSessionId, LEASE_TTL_MS);
@@ -100,9 +136,8 @@ export class ChatAgentService {
     if (!workspace) throw new Error("Bound workspace no longer exists.");
 
     if (chat.mode === "build") {
-      const wt = await this.workspaces.ensureWorktree({ repoPath: workspace.rootPath, chatId: chat.id, baseBranch: workspace.defaultBranch });
-      await this.db.updateChatWorktree(chat.id, wt.branch, wt.path);
-      chat = (await this.db.getChat(chat.id))!;
+      const prepared = await this.buildScope(chat, workspace);
+      chat = prepared.chat;
     }
 
     const [messages, events, questions, threadState, attachments] = await Promise.all([
@@ -160,8 +195,8 @@ export class ChatAgentService {
     };
   }
 
-  async sync(session: AgentSession) {
-    await this.heartbeat(session);
+  async sync(session: AgentSession, skipHeartbeat = false) {
+    if (!skipHeartbeat) await this.heartbeat(session);
     const chatId = this.requireConnected(session);
     const [messages, events, questions, allAttachments] = await Promise.all([
       this.db.listMessages(chatId, session.messageCursor),
@@ -178,6 +213,7 @@ export class ChatAgentService {
 
   async activity(session: AgentSession, stage: string, message: string) {
     await this.heartbeat(session);
+    await this.assertNotInterrupted(session);
     const chatId = this.requireConnected(session);
     const runId = await this.ensureRun(session);
     return this.db.appendEvent({ chatId, runId, type: "activity", payload: { stage, message: redactSecrets(message) } });
@@ -185,6 +221,7 @@ export class ChatAgentService {
 
   async ask(session: AgentSession, input: { kind: QuestionKind; prompt: string; options?: string[]; allowMultiple?: boolean; waitMs?: number }): Promise<QuestionRecord> {
     await this.heartbeat(session);
+    await this.assertNotInterrupted(session);
     const chatId = this.requireConnected(session);
     const runId = await this.ensureRun(session);
     const question = await this.db.createQuestion({ chatId, runId, kind: input.kind, prompt: input.prompt, options: input.options, allowMultiple: input.allowMultiple });
@@ -194,6 +231,8 @@ export class ChatAgentService {
     await this.db.updateRun(runId, "waiting");
     const deadline = Date.now() + waitMs;
     while (Date.now() < deadline) {
+      const interrupted = await this.consumeInterrupt(session);
+      if (interrupted) throw new Error(`Run cancelled by user: ${interrupted}`);
       const current = await this.db.getQuestion(question.id);
       if (current?.status === "answered") {
         await this.db.updateRun(runId, "running");
@@ -211,12 +250,12 @@ export class ChatAgentService {
     if (!chat) throw new Error("Chat no longer exists.");
     const workspace = await this.db.getWorkspace(chat.workspaceId);
     if (!workspace) throw new Error("Workspace no longer exists.");
-    if (chat.mode === "build" && !chat.worktreePath) {
-      const wt = await this.workspaces.ensureWorktree({ repoPath: workspace.rootPath, chatId: chat.id, baseBranch: workspace.defaultBranch });
-      await this.db.updateChatWorktree(chat.id, wt.branch, wt.path);
-      chat = (await this.db.getChat(chat.id))!;
+    let scope = workspace.rootPath;
+    if (chat.mode === "build") {
+      const prepared = await this.buildScope(chat, workspace);
+      chat = prepared.chat;
+      scope = prepared.scope;
     }
-    const scope = chat.mode === "build" ? chat.worktreePath! : workspace.rootPath;
     const candidate = cwd ? (cwd.startsWith("/") ? cwd : resolve(scope, cwd)) : scope;
     const [realScope, realCwd] = await Promise.all([realpath(scope), realpath(candidate)]);
     if (!isPathWithin(realScope, realCwd)) throw new Error(`cwd must remain inside the chat workspace (${realScope})`);
@@ -233,20 +272,61 @@ export class ChatAgentService {
       throw new Error("Review mode permits inspection commands only. Switch to Build mode to make changes.");
     }
     const runId = await this.ensureRun(session);
+    await this.assertNotInterrupted(session);
+    const activeRunId = session.runId ?? runId;
     const chatId = context.chat.id;
     await this.db.appendEvent({ chatId, runId, type: "command.started", payload: { command: redactSecrets(command), cwd: context.cwd } });
+    const controller = new AbortController();
+    let monitorDone = false;
+    const monitor = (async () => {
+      while (!monitorDone && !controller.signal.aborted) {
+        const pending = await this.db.getPendingInterrupt(activeRunId);
+        if (pending) { controller.abort(); return; }
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+    })();
     const result = await executeCommand(command, {
       cwd: context.cwd,
       timeoutMs,
+      signal: controller.signal,
       onStdout: async (chunk) => { await this.db.appendEvent({ chatId, runId, type: "command.stdout", payload: { chunk: redactSecrets(chunk) } }); },
       onStderr: async (chunk) => { await this.db.appendEvent({ chatId, runId, type: "command.stderr", payload: { chunk: redactSecrets(chunk) } }); },
     });
-    await this.db.appendEvent({ chatId, runId, type: "command.completed", payload: { command: redactSecrets(command), exitCode: result.exitCode, timedOut: result.timedOut } });
+    monitorDone = true;
+    await monitor;
+    await this.db.appendEvent({ chatId, runId: activeRunId, type: "command.completed", payload: { command: redactSecrets(command), exitCode: result.exitCode, timedOut: result.timedOut, cancelled: result.cancelled } });
+    if (result.cancelled) {
+      const pending = await this.db.getPendingInterrupt(activeRunId);
+      const reason = pending?.reason ?? "User requested stop";
+      await this.db.acknowledgeInterrupt(activeRunId);
+      await this.db.updateRun(activeRunId, "cancelled", reason);
+      const event = await this.db.appendEvent({ chatId, runId: activeRunId, type: "run.cancelled", payload: { reason } });
+      session.eventCursor = Math.max(session.eventCursor, event.seq);
+      session.runId = null;
+    }
     if (context.chat.mode === "build" && context.chat.worktreePath) {
       const status = await this.workspaces.status(context.chat.worktreePath);
       if (status.short) await this.db.appendEvent({ chatId, runId, type: "files.changed", payload: status });
     }
     return result;
+  }
+
+  async wait(session: AgentSession, timeoutMs = 45_000) {
+    const timeout = Math.min(Math.max(Math.floor(timeoutMs), 1_000), 55_000);
+    const deadline = Date.now() + timeout;
+    let lastHeartbeat = 0;
+    while (Date.now() < deadline) {
+      if (Date.now() - lastHeartbeat > 20_000) { await this.heartbeat(session); lastHeartbeat = Date.now(); }
+      const reason = await this.consumeInterrupt(session);
+      if (reason) return { status: "interrupted" as const, reason, connected: true, nextAction: "Read the user's latest instructions, or call chat_wait again." };
+      const delta = await this.sync(session, true);
+      if (delta.messages.length || delta.events.length || delta.attachments.length) {
+        return { status: "update" as const, ...delta };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    await this.heartbeat(session);
+    return { status: "timeout" as const, connected: true, nextAction: "Call chat_wait again to remain available for portal messages." };
   }
 
   async history(session: AgentSession, input: { afterSeq?: number; beforeSeq?: number | null; limit?: number }) {
@@ -286,6 +366,7 @@ export class ChatAgentService {
 
   async complete(session: AgentSession, input: { answer: string; summary: string; structured?: Record<string, unknown>; compactedThroughSeq?: number | null }) {
     await this.heartbeat(session);
+    await this.assertNotInterrupted(session);
     const chatId = this.requireConnected(session);
     const runId = await this.ensureRun(session);
     const message = await this.db.appendMessage({ chatId, role: "assistant", source: "agent", content: input.answer });
@@ -302,7 +383,7 @@ export class ChatAgentService {
     session.eventCursor = event.seq;
     await this.db.updateRun(runId, "completed");
     session.runId = null;
-    return { message, event };
+    return { message, event, nextAction: "Call chat_wait to remain available for the next portal message." };
   }
 
   async disconnect(session: AgentSession) {

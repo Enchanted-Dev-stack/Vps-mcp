@@ -20,7 +20,7 @@ export function createToolServer(session: AgentSession, agent: ChatAgentService)
     try { return ok(await executeCommand(command, { cwd, timeoutMs: timeout })); } catch (error) { return fail(error); }
   });
 
-  server.tool("chat_connect", "Connect this MCP session to a portal chat with a one-time binding code and hydrate its context.", {
+  server.tool("chat_connect", "Connect this MCP session to a portal chat with a one-time binding code and hydrate its context. Stay attached: after handling available work, call chat_wait instead of ending the turn when possible.", {
     binding_code: z.string().min(1),
   }, async ({ binding_code }) => {
     try { return ok(await agent.connect(session, binding_code)); } catch (error) { return fail(error); }
@@ -28,6 +28,12 @@ export function createToolServer(session: AgentSession, agent: ChatAgentService)
 
   server.tool("chat_sync", "Fetch new portal messages, events and open questions since the last cursor.", {}, async () => {
     try { return ok(await agent.sync(session)); } catch (error) { return fail(error); }
+  });
+
+  server.tool("chat_wait", "Wait for new portal messages, attachments, answers, or interruption without disconnecting. After a timeout, call chat_wait again to remain available.", {
+    timeout_ms: z.number().int().min(1000).max(55000).optional(),
+  }, async ({ timeout_ms }) => {
+    try { return ok(await agent.wait(session, timeout_ms)); } catch (error) { return fail(error); }
   });
 
   server.tool("chat_activity", "Publish concise observable activity to the portal. Do not publish private chain-of-thought.", {
@@ -87,7 +93,7 @@ export function createToolServer(session: AgentSession, agent: ChatAgentService)
     } catch (error) { return fail(error); }
   });
 
-  server.tool("chat_complete", "Mirror the final answer into the portal and complete the current run.", {
+  server.tool("chat_complete", "Mirror the final answer into the portal and complete the current run. After completion, call chat_wait to remain available for the next portal message when possible.", {
     answer: z.string().min(1).max(500000),
     summary: z.string().min(1).max(100000),
     structured: z.record(z.string(), z.unknown()).optional(),

@@ -5,7 +5,7 @@ import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
 import staticPlugin from "@fastify/static";
 import rateLimit from "@fastify/rate-limit";
-import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { AttachmentStore } from "@vps-mcp/attachments";
 import type { WorkspaceManager } from "@vps-mcp/workspace";
@@ -211,6 +211,29 @@ export async function createApi(options: ApiOptions) {
     };
   });
 
+  app.post("/api/repositories/folders", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    const body = parse(z.object({ parentPath: z.string().min(1).max(4096), name: z.string().trim().min(1).max(120).regex(/^[^\/\0]+$/) }), request.body, reply);
+    if (!body) return;
+    const configuredRoots = options.repositoryBrowseRoots ?? ["/opt", "/data", "/home", "/root"];
+    const roots = (await Promise.all(configuredRoots.map(async (root) => { try { return await realpath(root); } catch { return null; } }))).filter((root): root is string => Boolean(root));
+    let parent: string;
+    try { parent = await realpath(body.parentPath); } catch { return reply.code(404).send({ error: "path_not_found" }); }
+    const allowedRoot = roots.find((root) => { const rel = relative(root, parent); return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)); });
+    if (!allowedRoot) return reply.code(403).send({ error: "path_not_allowed" });
+    const target = resolve(parent, body.name);
+    const rel = relative(allowedRoot, target);
+    if (rel.startsWith("..") || isAbsolute(rel)) return reply.code(403).send({ error: "path_not_allowed" });
+    try { await mkdir(target); } catch (error: any) {
+      if (error?.code === "EEXIST") return reply.code(409).send({ error: "folder_exists" });
+      throw error;
+    }
+    const created = await realpath(target);
+    await audit(session, "workspace.folder.create", "folder", created, { parent });
+    return reply.code(201).send({ path: created, name: body.name, isGitRepository: false });
+  });
+
   app.get("/api/workspaces", async (request, reply) => {
     if (!(await auth(request, reply))) return;
     return db.listWorkspaces();
@@ -227,8 +250,8 @@ export async function createApi(options: ApiOptions) {
     }), request.body, reply);
     if (!body) return;
     if (options.workspaceManager) {
-      try { await options.workspaceManager.validateRepository(body.rootPath); }
-      catch (error) { return reply.code(400).send({ error: "repository_invalid", message: error instanceof Error ? error.message : String(error) }); }
+      try { await options.workspaceManager.validateWorkspaceRoot(body.rootPath); }
+      catch (error) { return reply.code(400).send({ error: "workspace_root_invalid", message: error instanceof Error ? error.message : String(error) }); }
     }
     const workspace = await db.createWorkspace(body);
     await audit(session, "workspace.create", "workspace", workspace.id, { name: workspace.name, rootPath: workspace.rootPath });
@@ -247,8 +270,8 @@ export async function createApi(options: ApiOptions) {
     }).refine((value) => Object.keys(value).length > 0, { message: "At least one field is required" }), request.body, reply);
     if (!params || !body) return;
     if (body.rootPath && options.workspaceManager) {
-      try { await options.workspaceManager.validateRepository(body.rootPath); }
-      catch (error) { return reply.code(400).send({ error: "repository_invalid", message: error instanceof Error ? error.message : String(error) }); }
+      try { await options.workspaceManager.validateWorkspaceRoot(body.rootPath); }
+      catch (error) { return reply.code(400).send({ error: "workspace_root_invalid", message: error instanceof Error ? error.message : String(error) }); }
     }
     const workspace = await db.updateWorkspace(params.workspaceId, body);
     if (!workspace) return reply.code(404).send({ error: "workspace_not_found" });
@@ -296,13 +319,14 @@ export async function createApi(options: ApiOptions) {
     if (!params) return;
     const chat = await db.getChat(params.chatId);
     if (!chat) return reply.code(404).send({ error: "chat_not_found" });
-    const [messages, questions, threadState, attachments] = await Promise.all([
+    const [messages, questions, threadState, attachments, activeRun] = await Promise.all([
       db.listMessages(chat.id),
       db.listOpenQuestions(chat.id),
       db.getThreadState(chat.id),
       db.listAttachments(chat.id),
+      db.getActiveRun(chat.id),
     ]);
-    return { ...chat, messages, questions, threadState, attachments: attachments.map(({ storagePath: _storagePath, ...attachment }) => attachment) };
+    return { ...chat, messages, questions, threadState, activeRun, attachments: attachments.map(({ storagePath: _storagePath, ...attachment }) => attachment) };
   });
 
   app.get("/api/chats/:chatId/diff", async (request, reply) => {
@@ -344,6 +368,19 @@ export async function createApi(options: ApiOptions) {
     await audit(session, "chat.delete", "chat", chat.id, { workspaceId: chat.workspaceId, title: chat.title });
     await db.deleteChat(chat.id);
     return reply.code(204).send();
+  });
+
+  app.post("/api/chats/:chatId/interrupt", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
+    const body = parse(z.object({ reason: z.string().trim().min(1).max(1000).optional() }), request.body ?? {}, reply);
+    if (!params || !body) return;
+    const requested = await db.requestInterrupt(params.chatId, body.reason ?? "User pressed Stop in the portal");
+    if (!requested) return reply.code(409).send({ error: "no_active_run" });
+    const event = await db.appendEvent({ chatId: params.chatId, runId: requested.runId, type: "run.interrupt.requested", payload: { reason: requested.reason } });
+    await audit(session, "run.interrupt", "run", requested.runId, { chatId: params.chatId, reason: requested.reason });
+    return reply.code(202).send({ ...requested, event });
   });
 
   app.post("/api/chats/:chatId/messages", async (request, reply) => {
