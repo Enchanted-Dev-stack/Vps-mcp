@@ -17,7 +17,7 @@ beforeEach(async () => {
 });
 afterAll(async () => db.close());
 
-async function login(app: ReturnType<typeof createApi>) {
+async function login(app: Awaited<ReturnType<typeof createApi>>) {
   const response = await app.inject({ method: "POST", url: "/api/auth/login", payload: { username: "admin", password: "correct horse battery staple" } });
   expect(response.statusCode).toBe(200);
   const body = response.json();
@@ -27,7 +27,7 @@ async function login(app: ReturnType<typeof createApi>) {
 
 describe("portal API", () => {
   it("requires auth, CSRF, then supports workspace/chat/message/binding flow", async () => {
-    const app = createApi({ db, secureCookies: false });
+    const app = await createApi({ db, secureCookies: false });
     expect((await app.inject({ method: "GET", url: "/api/workspaces" })).statusCode).toBe(401);
     const auth = await login(app);
     expect((await app.inject({ method: "POST", url: "/api/workspaces", headers: { cookie: auth.cookies }, payload: { name: "No CSRF", rootPath: "/tmp/nope" } })).statusCode).toBe(403);
@@ -52,7 +52,7 @@ describe("portal API", () => {
     const chat = await db.createChat({ workspaceId: ws.id, title: "Plan", mode: "plan" });
     const run = await db.createRun(chat.id);
     const question = await db.createQuestion({ chatId: chat.id, runId: run.id, kind: "single_choice", prompt: "Use A or B?", options: ["A", "B"] });
-    const app = createApi({ db, secureCookies: false });
+    const app = await createApi({ db, secureCookies: false });
     const auth = await login(app);
     const answer = await app.inject({ method: "POST", url: `/api/questions/${question.id}/answer`, headers: { cookie: auth.cookies, "x-csrf-token": auth.csrf }, payload: { answer: ["B"] } });
     expect(answer.statusCode).toBe(200);
@@ -68,7 +68,7 @@ describe("SSE replay", () => {
     const ws = await db.createWorkspace({ name: "SSE", rootPath: "/tmp/sse" });
     const chat = await db.createChat({ workspaceId: ws.id, title: "Stream", mode: "plan" });
     const first = await db.appendEvent({ chatId: chat.id, type: "activity", payload: { message: "one" } });
-    const app = createApi({ db, secureCookies: false });
+    const app = await createApi({ db, secureCookies: false });
     const auth = await login(app);
     await app.listen({ host: "127.0.0.1", port: 0 });
     const address = app.server.address();
@@ -104,6 +104,41 @@ describe("SSE replay", () => {
     const resumed = await readOne(first.seq);
     expect(resumed).toContain(`id: ${second.seq}`);
     expect(resumed).not.toContain(`id: ${first.seq}\n`);
+    await app.close();
+  });
+});
+
+describe("workspace/chat CRUD", () => {
+  it("updates and deletes workspace/chat resources and records audit entries", async () => {
+    const app = await createApi({ db, secureCookies: false });
+    const auth = await login(app);
+    const headers = { cookie: auth.cookies, "x-csrf-token": auth.csrf };
+    const ws = (await app.inject({ method: "POST", url: "/api/workspaces", headers, payload: { name: "CRUD", rootPath: "/tmp/crud" } })).json();
+    const updatedWs = await app.inject({ method: "PATCH", url: `/api/workspaces/${ws.id}`, headers, payload: { name: "CRUD 2", instructions: "new rules" } });
+    expect(updatedWs.statusCode).toBe(200);
+    expect(updatedWs.json().name).toBe("CRUD 2");
+
+    const chat = (await app.inject({ method: "POST", url: `/api/workspaces/${ws.id}/chats`, headers, payload: { title: "Old", mode: "plan" } })).json();
+    const updatedChat = await app.inject({ method: "PATCH", url: `/api/chats/${chat.id}`, headers, payload: { title: "New", mode: "review", status: "archived" } });
+    expect(updatedChat.statusCode).toBe(200);
+    expect(updatedChat.json()).toMatchObject({ title: "New", mode: "review", status: "archived" });
+    expect((await app.inject({ method: "DELETE", url: `/api/chats/${chat.id}`, headers })).statusCode).toBe(204);
+    expect((await app.inject({ method: "DELETE", url: `/api/workspaces/${ws.id}`, headers })).statusCode).toBe(204);
+    const audit = await db.pool.query("select action from audit_log order by created_at asc");
+    expect(audit.rows.map((row) => row.action)).toEqual(expect.arrayContaining(["workspace.create", "workspace.update", "chat.create", "chat.update", "chat.delete", "workspace.delete"]));
+    await app.close();
+  });
+});
+
+describe("login rate limiting", () => {
+  it("returns 429 after repeated failed login attempts from one client", async () => {
+    const app = await createApi({ db, secureCookies: false });
+    let lastStatus = 0;
+    for (let i = 0; i < 11; i++) {
+      const response = await app.inject({ method: "POST", url: "/api/auth/login", remoteAddress: "203.0.113.77", payload: { username: "admin", password: "wrong" } });
+      lastStatus = response.statusCode;
+    }
+    expect(lastStatus).toBe(429);
     await app.close();
   });
 });

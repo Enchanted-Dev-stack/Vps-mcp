@@ -39,8 +39,8 @@ This file is the canonical implementation checklist. Update it as work is comple
 ## Phase 3 — Control API + authentication
 - [x] Fastify API and health/readiness endpoints.
 - [x] Admin authentication (Argon2 hash, HttpOnly Secure SameSite cookie, CSRF protection).
-- [ ] Workspace CRUD.
-- [ ] Chat CRUD / Plan-Build-Review mode.
+- [x] Workspace CRUD.
+- [x] Chat CRUD / Plan-Build-Review mode.
 - [x] Message append/history APIs.
 - [x] One-time ChatGPT binding code issuance.
 - [x] Structured question create/answer APIs.
@@ -96,20 +96,21 @@ This file is the canonical implementation checklist. Update it as work is comple
 - [x] Hydration sends full verbatim thread while safely within configured context budget.
 - [x] When threshold is reached, compact oldest span and keep all newer messages verbatim.
 - [x] Structured compaction state: goal, requirements, decisions, architecture, completed, in-progress, TODOs, known issues, important files/tests.
-- [x] Tool-output pruning/summaries while retaining raw persisted output.
+- [x] Tool-output caps plus durable redacted event chunks; avoid persisting unbounded/secret-bearing raw output.
 - [x] Older-history retrieval/search.
-- [ ] 500-message reconnect/context-bound integration test.
+- [x] 500-message reconnect/context-bound integration test.
 
 ## Phase 10 — production hardening
-- [ ] Rate limits, CSP/security headers, XSS/HTML escaping.
+- [x] Rate limits, CSP/security headers, XSS/HTML escaping.
 - [x] Secret redaction before UI persistence/broadcast.
 - [x] Path/symlink protections for workspace operations.
-- [ ] Audit log.
+- [x] Audit log.
 - [ ] Crash/restart DB recovery tests.
-- [ ] Large-output/hung-command tests.
-- [ ] Dependency audit.
+- [x] Large-output/hung-command tests.
+- [x] Dependency audit.
 
 ## Phase 11 — deployment + smoke tests
+- [x] End-to-end smoke runner implemented (portal → OAuth/PKCE → MCP → Plan/Q&A/Build/attachment/completion/cleanup).
 - [x] Build production bundles.
 - [ ] Install systemd units without replacing v1 first.
 - [ ] Add Traefik portal/staging routes.

@@ -4,6 +4,7 @@ import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
 import staticPlugin from "@fastify/static";
+import rateLimit from "@fastify/rate-limit";
 import { readFile } from "node:fs/promises";
 import type { AttachmentStore } from "@vps-mcp/attachments";
 import type { WorkspaceManager } from "@vps-mcp/workspace";
@@ -43,12 +44,13 @@ export interface ApiOptions {
   staticDir?: string;
 }
 
-export function createApi(options: ApiOptions) {
+export async function createApi(options: ApiOptions) {
   const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
   const secureCookies = options.secureCookies ?? true;
   const { db } = options;
 
   app.register(cookie);
+  await app.register(rateLimit, { global: true, max: 300, timeWindow: "1 minute" });
   app.register(multipart, { limits: { files: 1, fileSize: options.attachmentStore?.maxBytes ?? 25 * 1024 * 1024 } });
   app.register(helmet, {
     contentSecurityPolicy: {
@@ -86,12 +88,23 @@ export function createApi(options: ApiOptions) {
     return true;
   }
 
+  async function audit(session: PortalSessionRecord, action: string, targetType?: string, targetId?: string, metadata?: Record<string, unknown>) {
+    await db.appendAudit({ actorType: "user", actorId: session.userId, action, targetType, targetId, metadata });
+  }
+
+  async function cleanupChatWorktree(chat: { workspaceId: string; worktreePath: string | null; branch: string | null }) {
+    if (!options.workspaceManager || !chat.worktreePath) return;
+    const workspace = await db.getWorkspace(chat.workspaceId);
+    if (!workspace) return;
+    await options.workspaceManager.removeWorktree({ repoPath: workspace.rootPath, worktreePath: chat.worktreePath, branch: chat.branch });
+  }
+
   app.get("/api/health", async () => {
     await db.pool.query("SELECT 1");
     return { ok: true };
   });
 
-  app.post("/api/auth/login", async (request, reply) => {
+  app.post("/api/auth/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request, reply) => {
     const body = parse(z.object({ username: z.string().min(1).max(100), password: z.string().min(1).max(4096) }), request.body, reply);
     if (!body) return;
     const user = await db.getPortalUserByUsername(body.username);
@@ -115,6 +128,7 @@ export function createApi(options: ApiOptions) {
       sameSite: "strict",
       maxAge,
     });
+    await db.appendAudit({ actorType: "user", actorId: user.id, action: "auth.login", targetType: "user", targetId: user.id });
     return { user: { id: user.id, username: user.username }, csrfToken: session.csrfToken, expiresAt: session.expiresAt };
   });
 
@@ -129,6 +143,7 @@ export function createApi(options: ApiOptions) {
     const session = await auth(request, reply);
     if (!session || !csrf(request, reply, session)) return;
     const token = request.cookies[SESSION_COOKIE]!;
+    await audit(session, "auth.logout", "user", session.userId);
     await db.deletePortalSession(token);
     reply.clearCookie(SESSION_COOKIE, { path: "/" });
     reply.clearCookie(CSRF_COOKIE, { path: "/" });
@@ -155,7 +170,43 @@ export function createApi(options: ApiOptions) {
       catch (error) { return reply.code(400).send({ error: "repository_invalid", message: error instanceof Error ? error.message : String(error) }); }
     }
     const workspace = await db.createWorkspace(body);
+    await audit(session, "workspace.create", "workspace", workspace.id, { name: workspace.name, rootPath: workspace.rootPath });
     return reply.code(201).send(workspace);
+  });
+
+  app.patch("/api/workspaces/:workspaceId", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    const params = parse(z.object({ workspaceId: z.string().min(1) }), request.params, reply);
+    const body = parse(z.object({
+      name: z.string().trim().min(1).max(120).optional(),
+      rootPath: z.string().min(1).max(4096).optional(),
+      defaultBranch: z.string().min(1).max(255).optional(),
+      instructions: z.string().max(100_000).optional(),
+    }).refine((value) => Object.keys(value).length > 0, { message: "At least one field is required" }), request.body, reply);
+    if (!params || !body) return;
+    if (body.rootPath && options.workspaceManager) {
+      try { await options.workspaceManager.validateRepository(body.rootPath); }
+      catch (error) { return reply.code(400).send({ error: "repository_invalid", message: error instanceof Error ? error.message : String(error) }); }
+    }
+    const workspace = await db.updateWorkspace(params.workspaceId, body);
+    if (!workspace) return reply.code(404).send({ error: "workspace_not_found" });
+    await audit(session, "workspace.update", "workspace", workspace.id, body);
+    return workspace;
+  });
+
+  app.delete("/api/workspaces/:workspaceId", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    const params = parse(z.object({ workspaceId: z.string().min(1) }), request.params, reply);
+    if (!params) return;
+    const workspace = await db.getWorkspace(params.workspaceId);
+    if (!workspace) return reply.code(404).send({ error: "workspace_not_found" });
+    const chats = await db.listChats(workspace.id);
+    for (const chat of chats) await cleanupChatWorktree(chat);
+    await audit(session, "workspace.delete", "workspace", workspace.id, { name: workspace.name });
+    await db.deleteWorkspace(workspace.id);
+    return reply.code(204).send();
   });
 
   app.get("/api/workspaces/:workspaceId/chats", async (request, reply) => {
@@ -174,6 +225,7 @@ export function createApi(options: ApiOptions) {
     const workspace = await db.getWorkspace(params.workspaceId);
     if (!workspace) return reply.code(404).send({ error: "workspace_not_found" });
     const chat = await db.createChat({ workspaceId: params.workspaceId, title: body.title, mode: body.mode });
+    await audit(session, "chat.create", "chat", chat.id, { workspaceId: chat.workspaceId, title: chat.title, mode: chat.mode });
     return reply.code(201).send(chat);
   });
 
@@ -196,11 +248,29 @@ export function createApi(options: ApiOptions) {
     const session = await auth(request, reply);
     if (!session || !csrf(request, reply, session)) return;
     const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
-    const body = parse(z.object({ mode: workspaceModeSchema }), request.body, reply);
+    const body = parse(z.object({
+      title: z.string().trim().min(1).max(200).optional(),
+      mode: workspaceModeSchema.optional(),
+      status: z.enum(["active", "archived"]).optional(),
+    }).refine((value) => Object.keys(value).length > 0, { message: "At least one field is required" }), request.body, reply);
     if (!params || !body) return;
-    const chat = await db.updateChatMode(params.chatId, body.mode);
+    const chat = await db.updateChat(params.chatId, body);
     if (!chat) return reply.code(404).send({ error: "chat_not_found" });
+    await audit(session, "chat.update", "chat", chat.id, body);
     return chat;
+  });
+
+  app.delete("/api/chats/:chatId", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
+    if (!params) return;
+    const chat = await db.getChat(params.chatId);
+    if (!chat) return reply.code(404).send({ error: "chat_not_found" });
+    await cleanupChatWorktree(chat);
+    await audit(session, "chat.delete", "chat", chat.id, { workspaceId: chat.workspaceId, title: chat.title });
+    await db.deleteChat(chat.id);
+    return reply.code(204).send();
   });
 
   app.post("/api/chats/:chatId/messages", async (request, reply) => {
@@ -212,6 +282,7 @@ export function createApi(options: ApiOptions) {
     if (!(await db.getChat(params.chatId))) return reply.code(404).send({ error: "chat_not_found" });
     const message = await db.appendMessage({ chatId: params.chatId, role: "user", source: "portal", content: body.content });
     if (body.attachmentIds?.length) await db.linkAttachments(params.chatId, message.id, body.attachmentIds);
+    await audit(session, "message.create", "message", message.id, { chatId: params.chatId, attachmentCount: body.attachmentIds?.length ?? 0 });
     return reply.code(201).send(message);
   });
 
@@ -227,6 +298,7 @@ export function createApi(options: ApiOptions) {
     const buffer = await part.toBuffer();
     const stored = await options.attachmentStore.put(buffer, part.filename, part.mimetype);
     const attachment = await db.createAttachment({ chatId: params.chatId, ...stored });
+    await audit(session, "attachment.create", "attachment", attachment.id, { chatId: params.chatId, mimeType: attachment.mimeType, sizeBytes: attachment.sizeBytes });
     const { storagePath: _storagePath, ...publicAttachment } = attachment;
     return reply.code(201).send(publicAttachment);
   });
@@ -250,6 +322,7 @@ export function createApi(options: ApiOptions) {
     if (!params) return;
     if (!(await db.getChat(params.chatId))) return reply.code(404).send({ error: "chat_not_found" });
     const binding = await db.issueBinding(params.chatId);
+    await audit(session, "binding.create", "chat", params.chatId, { expiresAt: binding.expiresAt });
     return reply.code(201).send(binding);
   });
 
@@ -310,6 +383,7 @@ export function createApi(options: ApiOptions) {
     if (!before) return reply.code(404).send({ error: "question_not_found" });
     const question = await db.answerQuestion(params.questionId, body.answer);
     if (!question) return reply.code(409).send({ error: "question_not_open" });
+    await audit(session, "question.answer", "question", question.id, { chatId: question.chatId });
     await db.appendEvent({
       chatId: question.chatId,
       runId: question.runId,

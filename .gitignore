@@ -10,3 +10,5 @@ test-results/
 *.log
 .DS_Store
 storage/
+
+*.tsbuildinfo

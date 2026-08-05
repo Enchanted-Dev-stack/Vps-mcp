@@ -190,3 +190,22 @@ describe("history retrieval", () => {
     expect(await db.listMessages(chat.id)).toHaveLength(3);
   });
 });
+
+describe("CRUD and audit", () => {
+  it("updates and deletes workspaces/chats and persists audit entries", async () => {
+    const ws = await db.createWorkspace({ name: "Before", rootPath: "/tmp/before" });
+    const updatedWs = await db.updateWorkspace(ws.id, { name: "After", instructions: "rules" });
+    expect(updatedWs?.name).toBe("After");
+    const chat = await db.createChat({ workspaceId: ws.id, title: "Old", mode: "plan" });
+    const updatedChat = await db.updateChat(chat.id, { title: "New", mode: "review" });
+    expect(updatedChat?.title).toBe("New");
+    expect(updatedChat?.mode).toBe("review");
+    await db.appendAudit({ actorType: "user", actorId: "usr_test", action: "chat.update", targetType: "chat", targetId: chat.id, metadata: { mode: "review" } });
+    const audit = await db.pool.query("select * from audit_log where target_id=$1", [chat.id]);
+    expect(audit.rowCount).toBe(1);
+    await db.deleteChat(chat.id);
+    expect(await db.getChat(chat.id)).toBeNull();
+    await db.deleteWorkspace(ws.id);
+    expect(await db.getWorkspace(ws.id)).toBeNull();
+  });
+});

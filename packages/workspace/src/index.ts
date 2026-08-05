@@ -1,6 +1,6 @@
 import { access, mkdir, realpath, stat } from "node:fs/promises";
 import { constants } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 
@@ -13,7 +13,7 @@ async function git(cwd: string, args: string[]): Promise<string> {
 
 export function isPathWithin(base: string, candidate: string): boolean {
   const rel = relative(resolve(base), resolve(candidate));
-  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !resolve(rel).startsWith(sep));
+  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
 }
 
 export interface WorktreeResult {
@@ -66,6 +66,31 @@ export class WorkspaceManager {
       await git(repo.root, ["worktree", "add", "-b", branch, target, input.baseBranch]);
     }
     return { path: target, branch, created: true };
+  }
+
+  async removeWorktree(input: { repoPath: string; worktreePath: string; branch?: string | null }): Promise<void> {
+    const repo = await this.validateRepository(input.repoPath);
+    const managedRoot = resolve(this.worktreeRoot);
+    const target = resolve(input.worktreePath);
+    if (target === managedRoot || !isPathWithin(managedRoot, target)) {
+      throw new Error(`Refusing to remove path outside managed worktree root: ${target}`);
+    }
+    if (input.branch && !input.branch.startsWith("agent/")) {
+      throw new Error(`Refusing to delete non-agent branch ${input.branch}`);
+    }
+    await execFileAsync("git", ["worktree", "remove", "--force", target], { cwd: repo.root }).catch(async (error: any) => {
+      if (error?.stderr?.includes("is not a working tree")) {
+        await git(repo.root, ["worktree", "prune"]);
+        return;
+      }
+      throw error;
+    });
+    if (input.branch) {
+      const exists = await execFileAsync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${input.branch}`], { cwd: repo.root })
+        .then(() => true)
+        .catch(() => false);
+      if (exists) await git(repo.root, ["branch", "-D", input.branch]);
+    }
   }
 
   async status(worktreePath: string): Promise<{ short: string; diffStat: string }> {

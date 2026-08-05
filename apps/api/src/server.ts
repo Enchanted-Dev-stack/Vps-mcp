@@ -18,7 +18,7 @@ if (adminUsername && adminPassword && !(await db.getPortalUserByUsername(adminUs
 
 const workspaceManager = new WorkspaceManager(process.env.WORKTREE_ROOT ?? "/data/vps-mcp/worktrees");
 const attachmentStore = new AttachmentStore(process.env.UPLOAD_ROOT ?? "/data/vps-mcp/uploads");
-const app = createApi({ db, secureCookies: process.env.SECURE_COOKIES !== "false", workspaceManager, attachmentStore, staticDir: process.env.PORTAL_STATIC_DIR });
+const app = await createApi({ db, secureCookies: process.env.SECURE_COOKIES !== "false", workspaceManager, attachmentStore, staticDir: process.env.PORTAL_STATIC_DIR });
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? "3100");
 await app.listen({ host, port });

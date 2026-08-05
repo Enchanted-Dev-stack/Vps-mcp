@@ -267,6 +267,24 @@ export class Database {
     return result.rowCount ? mapWorkspace(result.rows[0]) : null;
   }
 
+  async updateWorkspace(id: string, input: { name?: string; rootPath?: string; defaultBranch?: string; instructions?: string }): Promise<WorkspaceRecord | null> {
+    const result = await this.pool.query(
+      `UPDATE workspaces SET
+         name=COALESCE($2,name),
+         root_path=COALESCE($3,root_path),
+         default_branch=COALESCE($4,default_branch),
+         instructions=COALESCE($5,instructions),
+         updated_at=now()
+       WHERE id=$1 RETURNING *`,
+      [id, input.name ?? null, input.rootPath ?? null, input.defaultBranch ?? null, input.instructions ?? null],
+    );
+    return result.rowCount ? mapWorkspace(result.rows[0]) : null;
+  }
+
+  async deleteWorkspace(id: string): Promise<void> {
+    await this.pool.query("DELETE FROM workspaces WHERE id=$1", [id]);
+  }
+
   async createChat(input: { workspaceId: string; title: string; mode?: WorkspaceMode }): Promise<ChatRecord> {
     const id = createId("cht");
     const result = await this.pool.query(
@@ -296,6 +314,23 @@ export class Database {
       [id, mode],
     );
     return result.rowCount ? mapChat(result.rows[0]) : null;
+  }
+
+  async updateChat(id: string, input: { title?: string; mode?: WorkspaceMode; status?: "active" | "archived" }): Promise<ChatRecord | null> {
+    const result = await this.pool.query(
+      `UPDATE chats SET
+         title=COALESCE($2,title),
+         mode=COALESCE($3,mode),
+         status=COALESCE($4,status),
+         updated_at=now()
+       WHERE id=$1 RETURNING *`,
+      [id, input.title ?? null, input.mode ?? null, input.status ?? null],
+    );
+    return result.rowCount ? mapChat(result.rows[0]) : null;
+  }
+
+  async deleteChat(id: string): Promise<void> {
+    await this.pool.query("DELETE FROM chats WHERE id=$1", [id]);
   }
 
   async updateChatWorktree(id: string, branch: string | null, worktreePath: string | null): Promise<void> {
@@ -650,6 +685,14 @@ export class Database {
       await client.query("UPDATE agent_bindings SET consumed_at=now() WHERE id=$1", [row.id]);
       return { bindingId: row.id, chatId: row.chat_id };
     });
+  }
+
+  async appendAudit(input: { actorType: string; actorId?: string | null; action: string; targetType?: string | null; targetId?: string | null; metadata?: Record<string, unknown> }): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO audit_log (id,actor_type,actor_id,action,target_type,target_id,metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
+      [createId("evt"), input.actorType, input.actorId ?? null, input.action, input.targetType ?? null, input.targetId ?? null, JSON.stringify(input.metadata ?? {})],
+    );
   }
 
   async withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {

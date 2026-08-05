@@ -116,3 +116,46 @@ describe("context checkpoint hydration", () => {
     await tight.disconnect(tightSession);
   });
 });
+
+describe("large canonical history", () => {
+  it("reconnects to a 500-message chat with bounded hydration while old raw history stays searchable", async () => {
+    const ws = await db.createWorkspace({ name: "Long", rootPath: repo, defaultBranch: "main" });
+    const chat = await db.createChat({ workspaceId: ws.id, title: "Long thread", mode: "plan" });
+    for (let i = 1; i <= 500; i++) {
+      await db.appendMessage({
+        chatId: chat.id,
+        role: i % 2 ? "user" : "assistant",
+        source: i % 2 ? "portal" : "agent",
+        content: `canonical-message-${i} ` + "detail ".repeat(18),
+      });
+    }
+    await db.updateThreadState(chat.id, {
+      compactedThroughSeq: 480,
+      summary: "Messages 1-480: long-running implementation decisions and completed work.",
+      structured: { goal: "Long project", completedThrough: 480 },
+    });
+
+    const bounded = new ChatAgentService(db, new WorkspaceManager(join(root, "long-history")), {
+      maxContextTokens: 2200,
+      reservedTokens: 600,
+      compactionSummaryTokens: 250,
+    });
+    const binding = await db.issueBinding(chat.id, 60_000);
+    const session = createAgentSession();
+    const connected = await bounded.connect(session, binding.token);
+    expect(connected.context.mode).toBe("compacted");
+    expect(connected.context.compactedThroughSeq).toBe(480);
+    expect(connected.context.messages.map((m) => m.seq)).toEqual(Array.from({ length: 20 }, (_, index) => 481 + index));
+    expect(connected.context.estimatedTokens).toBeLessThanOrEqual(connected.context.availableTokens);
+    expect((await bounded.historySearch(session, "canonical-message-7 ", 5)).map((m) => m.seq)).toEqual([7]);
+    expect(await db.listMessages(chat.id)).toHaveLength(500);
+    await bounded.disconnect(session);
+
+    const secondBinding = await db.issueBinding(chat.id, 60_000);
+    const secondSession = createAgentSession();
+    const reconnected = await bounded.connect(secondSession, secondBinding.token);
+    expect(reconnected.context.messages.at(-1)?.seq).toBe(500);
+    expect(reconnected.context.summary).toContain("Messages 1-480");
+    await bounded.disconnect(secondSession);
+  });
+});
