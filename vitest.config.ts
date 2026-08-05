@@ -12,6 +12,7 @@ export default defineConfig({
     },
   },
   test: {
+    fileParallelism: false,
     testTimeout: 20_000,
     hookTimeout: 30_000,
   },

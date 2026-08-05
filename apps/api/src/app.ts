@@ -1,0 +1,285 @@
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import cookie from "@fastify/cookie";
+import helmet from "@fastify/helmet";
+import { verify } from "@node-rs/argon2";
+import { z } from "zod";
+import { workspaceModeSchema } from "@vps-mcp/core";
+import type { Database, PortalSessionRecord } from "@vps-mcp/db";
+
+const SESSION_COOKIE = "vpsmcp_session";
+const CSRF_COOKIE = "vpsmcp_csrf";
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function safeEqualHex(a: string, b: string): boolean {
+  const left = Buffer.from(a, "hex");
+  const right = Buffer.from(b, "hex");
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function parse<T>(schema: z.ZodType<T>, value: unknown, reply: FastifyReply): T | null {
+  const result = schema.safeParse(value);
+  if (!result.success) {
+    reply.code(400).send({ error: "invalid_request", issues: result.error.issues });
+    return null;
+  }
+  return result.data;
+}
+
+export interface ApiOptions {
+  db: Database;
+  secureCookies?: boolean;
+}
+
+export function createApi(options: ApiOptions) {
+  const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
+  const secureCookies = options.secureCookies ?? true;
+  const { db } = options;
+
+  app.register(cookie);
+  app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        connectSrc: ["'self'"],
+      },
+    },
+  });
+
+  async function auth(request: FastifyRequest, reply: FastifyReply): Promise<PortalSessionRecord | null> {
+    const token = request.cookies[SESSION_COOKIE];
+    if (!token) {
+      reply.code(401).send({ error: "unauthorized" });
+      return null;
+    }
+    const session = await db.resolvePortalSession(token);
+    if (!session) {
+      reply.clearCookie(SESSION_COOKIE, { path: "/" });
+      reply.clearCookie(CSRF_COOKIE, { path: "/" });
+      reply.code(401).send({ error: "unauthorized" });
+      return null;
+    }
+    return session;
+  }
+
+  function csrf(request: FastifyRequest, reply: FastifyReply, session: PortalSessionRecord): boolean {
+    const supplied = request.headers["x-csrf-token"];
+    if (typeof supplied !== "string" || !safeEqualHex(sha256(supplied), session.csrfHash)) {
+      reply.code(403).send({ error: "csrf" });
+      return false;
+    }
+    return true;
+  }
+
+  app.get("/api/health", async () => {
+    await db.pool.query("SELECT 1");
+    return { ok: true };
+  });
+
+  app.post("/api/auth/login", async (request, reply) => {
+    const body = parse(z.object({ username: z.string().min(1).max(100), password: z.string().min(1).max(4096) }), request.body, reply);
+    if (!body) return;
+    const user = await db.getPortalUserByUsername(body.username);
+    if (!user || !(await verify(user.passwordHash, body.password))) {
+      await new Promise((resolve) => setTimeout(resolve, 80 + Math.floor(Math.random() * 80)));
+      return reply.code(401).send({ error: "invalid_credentials" });
+    }
+    const session = await db.createPortalSession(user.id, SESSION_TTL_MS);
+    const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+    reply.setCookie(SESSION_COOKIE, session.token, {
+      path: "/",
+      httpOnly: true,
+      secure: secureCookies,
+      sameSite: "strict",
+      maxAge,
+    });
+    reply.setCookie(CSRF_COOKIE, session.csrfToken, {
+      path: "/",
+      httpOnly: false,
+      secure: secureCookies,
+      sameSite: "strict",
+      maxAge,
+    });
+    return { user: { id: user.id, username: user.username }, csrfToken: session.csrfToken, expiresAt: session.expiresAt };
+  });
+
+  app.get("/api/me", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session) return;
+    const csrfToken = request.cookies[CSRF_COOKIE] ?? null;
+    return { user: { id: session.userId, username: session.username }, csrfToken };
+  });
+
+  app.post("/api/auth/logout", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    const token = request.cookies[SESSION_COOKIE]!;
+    await db.deletePortalSession(token);
+    reply.clearCookie(SESSION_COOKIE, { path: "/" });
+    reply.clearCookie(CSRF_COOKIE, { path: "/" });
+    return { ok: true };
+  });
+
+  app.get("/api/workspaces", async (request, reply) => {
+    if (!(await auth(request, reply))) return;
+    return db.listWorkspaces();
+  });
+
+  app.post("/api/workspaces", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    const body = parse(z.object({
+      name: z.string().trim().min(1).max(120),
+      rootPath: z.string().min(1).max(4096),
+      defaultBranch: z.string().min(1).max(255).optional(),
+      instructions: z.string().max(100_000).optional(),
+    }), request.body, reply);
+    if (!body) return;
+    const workspace = await db.createWorkspace(body);
+    return reply.code(201).send(workspace);
+  });
+
+  app.get("/api/workspaces/:workspaceId/chats", async (request, reply) => {
+    if (!(await auth(request, reply))) return;
+    const params = parse(z.object({ workspaceId: z.string().min(1) }), request.params, reply);
+    if (!params) return;
+    return db.listChats(params.workspaceId);
+  });
+
+  app.post("/api/workspaces/:workspaceId/chats", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    const params = parse(z.object({ workspaceId: z.string().min(1) }), request.params, reply);
+    const body = parse(z.object({ title: z.string().trim().min(1).max(200), mode: workspaceModeSchema.optional() }), request.body, reply);
+    if (!params || !body) return;
+    const workspace = await db.getWorkspace(params.workspaceId);
+    if (!workspace) return reply.code(404).send({ error: "workspace_not_found" });
+    const chat = await db.createChat({ workspaceId: params.workspaceId, title: body.title, mode: body.mode });
+    return reply.code(201).send(chat);
+  });
+
+  app.get("/api/chats/:chatId", async (request, reply) => {
+    if (!(await auth(request, reply))) return;
+    const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
+    if (!params) return;
+    const chat = await db.getChat(params.chatId);
+    if (!chat) return reply.code(404).send({ error: "chat_not_found" });
+    const [messages, questions, threadState] = await Promise.all([
+      db.listMessages(chat.id),
+      db.listOpenQuestions(chat.id),
+      db.getThreadState(chat.id),
+    ]);
+    return { ...chat, messages, questions, threadState };
+  });
+
+  app.patch("/api/chats/:chatId", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
+    const body = parse(z.object({ mode: workspaceModeSchema }), request.body, reply);
+    if (!params || !body) return;
+    const chat = await db.updateChatMode(params.chatId, body.mode);
+    if (!chat) return reply.code(404).send({ error: "chat_not_found" });
+    return chat;
+  });
+
+  app.post("/api/chats/:chatId/messages", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
+    const body = parse(z.object({ content: z.string().trim().min(1).max(500_000) }), request.body, reply);
+    if (!params || !body) return;
+    if (!(await db.getChat(params.chatId))) return reply.code(404).send({ error: "chat_not_found" });
+    const message = await db.appendMessage({ chatId: params.chatId, role: "user", source: "portal", content: body.content });
+    return reply.code(201).send(message);
+  });
+
+  app.post("/api/chats/:chatId/bindings", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
+    if (!params) return;
+    if (!(await db.getChat(params.chatId))) return reply.code(404).send({ error: "chat_not_found" });
+    const binding = await db.issueBinding(params.chatId);
+    return reply.code(201).send(binding);
+  });
+
+  app.get("/api/chats/:chatId/events", async (request, reply) => {
+    if (!(await auth(request, reply))) return;
+    const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
+    const query = parse(z.object({ after: z.coerce.number().int().min(0).default(0) }), request.query, reply);
+    if (!params || !query) return;
+    return db.listEvents(params.chatId, query.after);
+  });
+
+  app.get("/api/chats/:chatId/events/stream", async (request, reply) => {
+    if (!(await auth(request, reply))) return;
+    const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
+    const query = parse(z.object({ after: z.coerce.number().int().min(0).default(0) }), request.query, reply);
+    if (!params || !query) return;
+    if (!(await db.getChat(params.chatId))) return reply.code(404).send({ error: "chat_not_found" });
+
+    reply.hijack();
+    const response = reply.raw;
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    response.flushHeaders?.();
+    let cursor = Math.max(query.after, Number(request.headers["last-event-id"] ?? 0) || 0);
+    let closed = false;
+    request.raw.on("close", () => { closed = true; });
+
+    while (!closed) {
+      const events = await db.listEvents(params.chatId, cursor, 250);
+      for (const event of events) {
+        response.write(`id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+        cursor = event.seq;
+      }
+      if (!events.length) response.write(": keepalive\n\n");
+      await new Promise((resolve) => setTimeout(resolve, events.length ? 50 : 800));
+    }
+    response.end();
+  });
+
+  app.get("/api/chats/:chatId/questions", async (request, reply) => {
+    if (!(await auth(request, reply))) return;
+    const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
+    if (!params) return;
+    return db.listOpenQuestions(params.chatId);
+  });
+
+  app.post("/api/questions/:questionId/answer", async (request, reply) => {
+    const session = await auth(request, reply);
+    if (!session || !csrf(request, reply, session)) return;
+    const params = parse(z.object({ questionId: z.string().min(1) }), request.params, reply);
+    const body = parse(z.object({ answer: z.unknown() }), request.body, reply);
+    if (!params || !body) return;
+    const before = await db.getQuestion(params.questionId);
+    if (!before) return reply.code(404).send({ error: "question_not_found" });
+    const question = await db.answerQuestion(params.questionId, body.answer);
+    if (!question) return reply.code(409).send({ error: "question_not_open" });
+    await db.appendEvent({
+      chatId: question.chatId,
+      runId: question.runId,
+      type: "question.answered",
+      payload: { questionId: question.id, answer: question.answer },
+    });
+    return question;
+  });
+
+  app.get("/api/random-nonce", async (request, reply) => {
+    if (!(await auth(request, reply))) return;
+    return { nonce: randomBytes(16).toString("base64url") };
+  });
+
+  return app;
+}

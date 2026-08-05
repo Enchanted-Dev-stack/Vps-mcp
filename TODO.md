@@ -37,19 +37,19 @@ This file is the canonical implementation checklist. Update it as work is comple
 - [x] Lease claim/heartbeat/expiry tests.
 
 ## Phase 3 — Control API + authentication
-- [ ] Fastify API and health/readiness endpoints.
-- [ ] Admin authentication (Argon2 hash, HttpOnly Secure SameSite cookie, CSRF protection).
+- [x] Fastify API and health/readiness endpoints.
+- [x] Admin authentication (Argon2 hash, HttpOnly Secure SameSite cookie, CSRF protection).
 - [ ] Workspace CRUD.
 - [ ] Chat CRUD / Plan-Build-Review mode.
-- [ ] Message append/history APIs.
-- [ ] One-time ChatGPT binding code issuance.
-- [ ] Structured question create/answer APIs.
+- [x] Message append/history APIs.
+- [x] One-time ChatGPT binding code issuance.
+- [x] Structured question create/answer APIs.
 - [ ] Validation and authorization tests.
 
 ## Phase 4 — realtime event system
-- [ ] Durable run/event persistence.
-- [ ] SSE endpoint with replay from `Last-Event-ID`/sequence cursor.
-- [ ] Run activity, command, file change, question, completion events.
+- [x] Durable run/event persistence.
+- [x] SSE endpoint with replay from `Last-Event-ID`/sequence cursor.
+- [x] Run activity, command, file change, question, completion events.
 - [ ] SSE disconnect/reconnect/no-duplicate integration tests.
 
 ## Phase 5 — clean Codex-like portal UI

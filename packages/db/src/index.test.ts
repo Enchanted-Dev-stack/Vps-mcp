@@ -105,3 +105,32 @@ describe("questions", () => {
     expect(answered?.answer).toEqual(["B"]);
   });
 });
+
+describe("portal sessions", () => {
+  it("resolves a hashed session token and rejects it after deletion", async () => {
+    const user = await db.createPortalUser("admin", "argon-hash");
+    const session = await db.createPortalSession(user.id, 60_000);
+    const resolved = await db.resolvePortalSession(session.token);
+    expect(resolved?.userId).toBe(user.id);
+    expect(resolved?.username).toBe("admin");
+    expect(resolved?.csrfHash).toMatch(/^[a-f0-9]{64}$/);
+    await db.deletePortalSession(session.token);
+    expect(await db.resolvePortalSession(session.token)).toBeNull();
+  });
+});
+
+describe("thread state", () => {
+  it("persists structured compaction state without deleting messages", async () => {
+    const chat = await seedChat();
+    await db.appendMessage({ chatId: chat.id, role: "user", source: "portal", content: "old message" });
+    await db.updateThreadState(chat.id, {
+      compactedThroughSeq: 1,
+      summary: "Earlier work summarized",
+      structured: { goal: "Ship portal", todos: ["tests"] },
+    });
+    const state = await db.getThreadState(chat.id);
+    expect(state?.compactedThroughSeq).toBe(1);
+    expect(state?.structured).toEqual({ goal: "Ship portal", todos: ["tests"] });
+    expect(await db.listMessages(chat.id)).toHaveLength(1);
+  });
+});

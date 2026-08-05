@@ -68,6 +68,29 @@ export interface EventRecord {
   createdAt: string;
 }
 
+export interface PortalUserRecord {
+  id: string;
+  username: string;
+  passwordHash: string;
+  createdAt: string;
+}
+
+export interface PortalSessionRecord {
+  id: string;
+  userId: string;
+  username: string;
+  csrfHash: string;
+  expiresAt: string;
+}
+
+export interface ThreadStateRecord {
+  chatId: string;
+  compactedThroughSeq: number | null;
+  summary: string;
+  structured: Record<string, unknown>;
+  updatedAt: string;
+}
+
 export interface QuestionRecord {
   id: string;
   chatId: string;
@@ -443,6 +466,82 @@ export class Database {
       [chatId],
     );
     return result.rows.map(mapQuestion);
+  }
+
+  async createPortalUser(username: string, passwordHash: string): Promise<PortalUserRecord> {
+    const id = createId("usr");
+    const result = await this.pool.query(
+      `INSERT INTO users (id,username,password_hash) VALUES ($1,$2,$3) RETURNING *`,
+      [id, username, passwordHash],
+    );
+    const row = result.rows[0];
+    return { id: row.id, username: row.username, passwordHash: row.password_hash, createdAt: iso(row.created_at)! };
+  }
+
+  async getPortalUserByUsername(username: string): Promise<PortalUserRecord | null> {
+    const result = await this.pool.query("SELECT * FROM users WHERE username=$1", [username]);
+    if (!result.rowCount) return null;
+    const row = result.rows[0];
+    return { id: row.id, username: row.username, passwordHash: row.password_hash, createdAt: iso(row.created_at)! };
+  }
+
+  async createPortalSession(userId: string, ttlMs: number): Promise<{ token: string; csrfToken: string; expiresAt: string }> {
+    const id = createId("tok");
+    const token = `ses_${randomBytes(32).toString("base64url")}`;
+    const csrfToken = `csrf_${randomBytes(24).toString("base64url")}`;
+    const expiresAt = new Date(Date.now() + ttlMs);
+    await this.pool.query(
+      `INSERT INTO portal_sessions (id,user_id,token_hash,csrf_hash,expires_at) VALUES ($1,$2,$3,$4,$5)`,
+      [id, userId, sha256(token), sha256(csrfToken), expiresAt],
+    );
+    return { token, csrfToken, expiresAt: expiresAt.toISOString() };
+  }
+
+  async resolvePortalSession(token: string): Promise<PortalSessionRecord | null> {
+    const result = await this.pool.query(
+      `SELECT s.id,s.user_id,u.username,s.csrf_hash,s.expires_at
+       FROM portal_sessions s JOIN users u ON u.id=s.user_id
+       WHERE s.token_hash=$1 AND s.expires_at>now()`,
+      [sha256(token)],
+    );
+    if (!result.rowCount) return null;
+    const row = result.rows[0];
+    return { id: row.id, userId: row.user_id, username: row.username, csrfHash: row.csrf_hash, expiresAt: iso(row.expires_at)! };
+  }
+
+  async deletePortalSession(token: string): Promise<void> {
+    await this.pool.query("DELETE FROM portal_sessions WHERE token_hash=$1", [sha256(token)]);
+  }
+
+  async getThreadState(chatId: string): Promise<ThreadStateRecord | null> {
+    const result = await this.pool.query("SELECT * FROM thread_state WHERE chat_id=$1", [chatId]);
+    if (!result.rowCount) return null;
+    const row = result.rows[0];
+    return {
+      chatId: row.chat_id,
+      compactedThroughSeq: row.compacted_through_seq === null ? null : Number(row.compacted_through_seq),
+      summary: row.summary,
+      structured: row.structured ?? {},
+      updatedAt: iso(row.updated_at)!,
+    };
+  }
+
+  async updateThreadState(chatId: string, input: { compactedThroughSeq: number | null; summary: string; structured: Record<string, unknown> }): Promise<ThreadStateRecord> {
+    const result = await this.pool.query(
+      `INSERT INTO thread_state (chat_id,compacted_through_seq,summary,structured,updated_at)
+       VALUES ($1,$2,$3,$4::jsonb,now())
+       ON CONFLICT (chat_id) DO UPDATE SET compacted_through_seq=EXCLUDED.compacted_through_seq, summary=EXCLUDED.summary, structured=EXCLUDED.structured, updated_at=now()
+       RETURNING *`,
+      [chatId, input.compactedThroughSeq, input.summary, JSON.stringify(input.structured)],
+    );
+    const row = result.rows[0];
+    return {
+      chatId: row.chat_id,
+      compactedThroughSeq: row.compacted_through_seq === null ? null : Number(row.compacted_through_seq),
+      summary: row.summary,
+      structured: row.structured ?? {},
+      updatedAt: iso(row.updated_at)!,
+    };
   }
 
   async withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
