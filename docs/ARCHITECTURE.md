@@ -4,12 +4,12 @@
 A self-hosted Codex-like control plane that can bind individual portal chats to individual ChatGPT Web conversations through MCP, while retaining a future path to API-driven autonomous agents.
 
 ## Runtime boundaries
-1. **portal-control** (non-privileged): HTTP API, auth, DB access, SSE, static web UI.
+1. **portal-control**: HTTP API, auth, DB access, SSE, static web UI. The current disposable-VPS deployment runs it as root only for arbitrary repository validation/worktree cleanup; it exposes no shell route and should become unprivileged behind a narrow repository helper for multi-tenant production.
 2. **mcp-gateway** (privileged): MCP OAuth + agent tools. Root-only execution stays here rather than in browser-facing code.
 3. **PostgreSQL**: canonical durable state.
 4. **Traefik (existing Coolify)**: public TLS/reverse proxy.
 
-The existing `/opt/terminal-mcp` remains live until the v2 gateway is proven by tests.
+The existing `/opt/terminal-mcp` remains live as a rollback/control connector until the v2 gateway is proven and the user explicitly connects/cuts over.
 
 ## Identity hierarchy
 `workspace -> chat -> run -> event`.

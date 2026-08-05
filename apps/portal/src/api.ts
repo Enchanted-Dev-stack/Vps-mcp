@@ -21,6 +21,7 @@ export const api={
   chats:(workspaceId:string)=>request<Chat[]>(`/api/workspaces/${workspaceId}/chats`),
   createChat:(workspaceId:string,data:{title:string;mode:Mode})=>request<Chat>(`/api/workspaces/${workspaceId}/chats`,{method:"POST",body:JSON.stringify(data)}),
   chat:(chatId:string)=>request<ChatDetail>(`/api/chats/${chatId}`),
+  diff:(chatId:string)=>request<{short:string;diffStat:string;diff:string;worktreePath:string|null;branch?:string|null}>(`/api/chats/${chatId}/diff`),
   mode:(chatId:string,mode:Mode)=>request<Chat>(`/api/chats/${chatId}`,{method:"PATCH",body:JSON.stringify({mode})}),
   message:(chatId:string,content:string,attachmentIds:string[]=[])=>request(`/api/chats/${chatId}/messages`,{method:"POST",body:JSON.stringify({content,attachmentIds})}),
   upload:async(chatId:string,file:File)=>{const form=new FormData();form.append("file",file);return request<Attachment>(`/api/chats/${chatId}/attachments`,{method:"POST",body:form})},

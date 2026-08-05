@@ -1,0 +1,25 @@
+http:
+  routers:
+    vps-mcp-agent-mcp:
+      rule: "Host(`agent.example.com`) && (PathPrefix(`/mcp`) || PathPrefix(`/.well-known/`) || PathPrefix(`/oauth/`))"
+      entryPoints: [https]
+      priority: 100
+      service: vps-mcp-agent-mcp
+      tls:
+        certResolver: letsencrypt
+    vps-mcp-agent-portal:
+      rule: "Host(`agent.example.com`)"
+      entryPoints: [https]
+      priority: 10
+      service: vps-mcp-agent-portal
+      tls:
+        certResolver: letsencrypt
+  services:
+    vps-mcp-agent-mcp:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:3201"
+    vps-mcp-agent-portal:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:3100"

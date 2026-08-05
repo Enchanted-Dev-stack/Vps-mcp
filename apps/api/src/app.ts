@@ -244,6 +244,18 @@ export async function createApi(options: ApiOptions) {
     return { ...chat, messages, questions, threadState, attachments: attachments.map(({ storagePath: _storagePath, ...attachment }) => attachment) };
   });
 
+  app.get("/api/chats/:chatId/diff", async (request, reply) => {
+    if (!(await auth(request, reply))) return;
+    if (!options.workspaceManager) return reply.code(503).send({ error: "workspace_manager_disabled" });
+    const params = parse(z.object({ chatId: z.string().min(1) }), request.params, reply);
+    if (!params) return;
+    const chat = await db.getChat(params.chatId);
+    if (!chat) return reply.code(404).send({ error: "chat_not_found" });
+    if (!chat.worktreePath) return { short: "", diffStat: "", diff: "", worktreePath: null };
+    const changes = await options.workspaceManager.diff(chat.worktreePath);
+    return { ...changes, worktreePath: chat.worktreePath, branch: chat.branch };
+  });
+
   app.patch("/api/chats/:chatId", async (request, reply) => {
     const session = await auth(request, reply);
     if (!session || !csrf(request, reply, session)) return;

@@ -47,6 +47,12 @@ describe("plan command policy", () => {
     expect(isPlanSafeCommand("touch nope.txt")).toBe(false);
     expect(isPlanSafeCommand("echo x > nope.txt")).toBe(false);
     expect(isPlanSafeCommand("git checkout -b nope")).toBe(false);
+    expect(isPlanSafeCommand("git branch new-branch")).toBe(false);
+    expect(isPlanSafeCommand("find . -delete")).toBe(false);
+    expect(isPlanSafeCommand("awk 'BEGIN{system(\"touch nope\")}'")).toBe(false);
+    expect(isPlanSafeCommand("env touch nope")).toBe(false);
+    expect(isPlanSafeCommand("rg --pre 'touch nope' needle .")).toBe(false);
+    expect(isPlanSafeCommand("git diff --output=/tmp/nope")).toBe(false);
   });
 });
 

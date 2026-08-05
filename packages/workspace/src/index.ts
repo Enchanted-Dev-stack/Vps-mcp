@@ -93,6 +93,17 @@ export class WorkspaceManager {
     }
   }
 
+  async diff(worktreePath: string): Promise<{ short: string; diffStat: string; diff: string }> {
+    const root = await realpath(worktreePath);
+    const [short, diffStat, unstaged, staged] = await Promise.all([
+      git(root, ["status", "--short"]),
+      git(root, ["diff", "--stat", "HEAD"]),
+      git(root, ["diff", "--no-ext-diff", "--unified=3"]),
+      git(root, ["diff", "--cached", "--no-ext-diff", "--unified=3"]),
+    ]);
+    return { short, diffStat, diff: [staged, unstaged].filter(Boolean).join("\n") };
+  }
+
   async status(worktreePath: string): Promise<{ short: string; diffStat: string }> {
     const short = await git(worktreePath, ["status", "--short"]);
     const diffStat = await git(worktreePath, ["diff", "--stat"]);

@@ -221,7 +221,19 @@ export async function migrate(pool: Pool): Promise<void> {
     }
   }
   if (!sql) throw new Error("Unable to locate DB migration 001_init.sql");
-  await pool.query(sql);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // Serialize schema bootstrap across API/MCP processes starting simultaneously.
+    await client.query("SELECT pg_advisory_xact_lock($1)", [827_461_903]);
+    await client.query(sql);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function resetForTests(pool: Pool): Promise<void> {

@@ -1,0 +1,18 @@
+[Unit]
+Description=VPS MCP v2 Gateway
+After=network-online.target docker.service vps-mcp-api.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vps-mcp
+EnvironmentFile=/etc/vps-mcp-mcp.env
+ExecStart=/usr/bin/node /opt/vps-mcp/apps/mcp/dist/server.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target

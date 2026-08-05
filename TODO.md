@@ -12,7 +12,7 @@ This file is the canonical implementation checklist. Update it as work is comple
 - [x] Portal can surface structured questions/answers to an agent.
 - [x] Persist events before broadcasting them to the UI.
 - [x] Redact likely secrets from activity/output shown in the portal.
-- [ ] Unit/integration/smoke tests must pass before live MCP cutover.
+- [x] Unit/integration/smoke tests must pass before live MCP cutover.
 
 ## Phase 0 — bootstrap / safety
 - [x] Clone `Enchanted-Dev-stack/Vps-mcp` into `/opt/vps-mcp`.
@@ -61,9 +61,9 @@ This file is the canonical implementation checklist. Update it as work is comple
 - [x] Agent connection badge + one-time binding-code dialog.
 - [x] Collapsible activity/tool cards.
 - [x] Structured question cards (single choice, multi choice, free text).
-- [ ] Diff/run summary surfaces.
+- [x] Diff/run summary surfaces.
 - [x] Responsive/mobile basics.
-- [ ] Playwright happy-path tests.
+- [x] Playwright happy-path tests.
 
 ## Phase 6 — MCP gateway v2 (TDD)
 - [x] Preserve original `terminal(command,cwd?,timeout?)` behavior.
@@ -105,20 +105,21 @@ This file is the canonical implementation checklist. Update it as work is comple
 - [x] Secret redaction before UI persistence/broadcast.
 - [x] Path/symlink protections for workspace operations.
 - [x] Audit log.
-- [ ] Crash/restart DB recovery tests.
+- [x] Crash/restart DB recovery tests.
 - [x] Large-output/hung-command tests.
 - [x] Dependency audit.
 
 ## Phase 11 — deployment + smoke tests
+- [x] Candidate deployed at `https://agent.156.67.111.59.nip.io` with valid Let’s Encrypt TLS; v1 remains active separately.
 - [x] End-to-end smoke runner implemented (portal → OAuth/PKCE → MCP → Plan/Q&A/Build/attachment/completion/cleanup).
 - [x] Build production bundles.
-- [ ] Install systemd units without replacing v1 first.
-- [ ] Add Traefik portal/staging routes.
-- [ ] `npm run smoke` validates portal, DB, auth, SSE, binding, MCP, terminal, questions, persistence.
-- [ ] Restart candidate services and rerun smoke.
-- [ ] Cut live MCP only after candidate passes.
-- [ ] Verify rollback path.
-- [ ] Final Git commit and push to origin.
+- [x] Install systemd units without replacing v1 first.
+- [x] Add Traefik portal/staging routes.
+- [x] `npm run smoke` validates portal, DB, auth, SSE, binding, MCP, terminal, questions, persistence.
+- [x] Restart candidate services and rerun smoke.
+- [ ] User connects ChatGPT to the v2 MCP, then optionally retire/cut v1 (intentionally pending user-side connector switch).
+- [x] Verify rollback path.
+- [x] Final Git commit and push to origin.
 
 ## Later / V2
 - [ ] AgentDriver abstraction.

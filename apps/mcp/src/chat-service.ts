@@ -21,11 +21,10 @@ export function createAgentSession(): AgentSession {
 }
 
 const simpleReadCommands = new Set([
-  "pwd", "ls", "find", "rg", "grep", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr",
-  "stat", "file", "du", "df", "ps", "ss", "which", "whereis", "printenv", "env", "jq", "awk",
-  "hostname", "uname", "id", "whoami", "date", "realpath", "readlink", "tree", "cd", "echo", "printf",
+  "pwd", "ls", "grep", "cat", "head", "tail", "wc", "cut", "tr", "stat", "file", "du", "df",
+  "ps", "ss", "which", "whereis", "printenv", "jq", "uname", "id", "whoami", "realpath", "readlink", "tree", "echo", "printf",
 ]);
-const readOnlyGit = new Set(["status", "diff", "log", "show", "branch", "rev-parse", "ls-files", "grep", "remote", "tag", "describe"]);
+const readOnlyGit = new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "grep", "describe"]);
 const readOnlyDocker = new Set(["ps", "logs", "inspect", "images", "stats", "version", "info"]);
 const readOnlySystemctl = new Set(["status", "show", "cat", "list-units", "list-unit-files", "is-active", "is-enabled"]);
 
@@ -39,7 +38,12 @@ export function isPlanSafeCommand(command: string): boolean {
     const executable = words[0]?.replace(/^.*\//, "");
     if (!executable) return false;
     if (simpleReadCommands.has(executable)) return true;
-    if (executable === "git") return Boolean(words[1] && readOnlyGit.has(words[1]));
+    if (executable === "rg") return !words.slice(1).some((word) => word === "--pre" || word.startsWith("--pre=") || word === "--hostname-bin" || word.startsWith("--hostname-bin="));
+    if (executable === "git") {
+      if (!words[1] || !readOnlyGit.has(words[1])) return false;
+      if (["diff", "show", "log"].includes(words[1]) && words.slice(2).some((word) => word === "--ext-diff" || word === "--textconv" || word.startsWith("--output="))) return false;
+      return true;
+    }
     if (executable === "docker") return Boolean(words[1] && readOnlyDocker.has(words[1]));
     if (executable === "systemctl") return Boolean(words[1] && readOnlySystemctl.has(words[1]));
     return false;

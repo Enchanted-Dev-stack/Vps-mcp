@@ -209,3 +209,22 @@ describe("CRUD and audit", () => {
     expect(await db.getWorkspace(ws.id)).toBeNull();
   });
 });
+
+describe("migration startup concurrency", () => {
+  it("serializes multiple processes bootstrapping a fresh database", async () => {
+    const source = new URL(url);
+    const name = `vps_mcp_migrate_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const quoted = `"${name.replaceAll('"', '""')}"`;
+    await db.pool.query(`CREATE DATABASE ${quoted}`);
+    const target = new URL(source); target.pathname = `/${name}`;
+    const pools = Array.from({ length: 4 }, () => new Pool({ connectionString: target.toString(), max: 2 }));
+    try {
+      await Promise.all(pools.map((pool) => migrate(pool)));
+      const check = await pools[0].query("select to_regclass('public.users') as users, to_regclass('public.chats') as chats");
+      expect(check.rows[0]).toMatchObject({ users: "users", chats: "chats" });
+    } finally {
+      await Promise.all(pools.map((pool) => pool.end()));
+      await db.pool.query(`DROP DATABASE ${quoted}`);
+    }
+  });
+});

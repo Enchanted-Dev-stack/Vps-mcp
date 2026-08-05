@@ -16,6 +16,7 @@ export function createToolServer(session: AgentSession, agent: ChatAgentService)
   server.tool("terminal", "Execute a command on the test VPS using /bin/bash -lc. Use tmux for long-running processes.", {
     command: z.string().min(1), cwd: z.string().optional(), timeout: z.number().finite().optional(),
   }, async ({ command, cwd, timeout }) => {
+    if (session.chatId) return fail(new Error("The unrestricted terminal tool is disabled while this MCP session is connected to a portal chat. Use chat_terminal so the chat mode and worktree policy are enforced."));
     try { return ok(await executeCommand(command, { cwd, timeoutMs: timeout })); } catch (error) { return fail(error); }
   });
 

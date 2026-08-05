@@ -1,0 +1,22 @@
+[Unit]
+Description=VPS MCP Agent Portal API
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vps-mcp
+EnvironmentFile=/etc/vps-mcp-api.env
+ExecStart=/usr/bin/node /opt/vps-mcp/apps/api/dist/server.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

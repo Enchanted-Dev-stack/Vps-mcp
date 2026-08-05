@@ -57,3 +57,20 @@ it("recognizes nested paths but rejects sibling escapes", () => {
   expect(isPathWithin("/tmp/base", "/tmp/base-other/file")).toBe(false);
   expect(isPathWithin("/tmp/base", "/tmp/base/../outside")).toBe(false);
 });
+
+
+it("returns status and textual diff for a managed worktree", async () => {
+  const root = await mkdtemp(join(tmpdir(), "vpsmcp-diff-"));
+  const repo = join(root, "repo");
+  execFileSync("mkdir", ["-p", repo]);
+  git(repo, "init", "-b", "main");
+  git(repo, "config", "user.email", "tests@example.com"); git(repo, "config", "user.name", "Tests");
+  await writeFile(join(repo, "same.txt"), "BEFORE\n"); git(repo, "add", "."); git(repo, "commit", "-m", "base");
+  const manager = new WorkspaceManager(join(root, "worktrees"));
+  const wt = await manager.ensureWorktree({ repoPath: repo, chatId: "cht_diff", baseBranch: "main" });
+  await writeFile(join(wt.path, "same.txt"), "AFTER\n");
+  const result = await manager.diff(wt.path);
+  expect(result.short).toContain("M same.txt");
+  expect(result.diffStat).toContain("same.txt");
+  expect(result.diff).toContain("-BEFORE"); expect(result.diff).toContain("+AFTER");
+});

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { access, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -38,6 +38,29 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!response.ok) throw new Error(`${method} ${path} -> ${response.status}: ${typeof body === "string" ? body : JSON.stringify(body)}`);
   return body as T;
 }
+
+async function readOneSse(chatId: string, after = 0): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch(`${base}/api/chats/${chatId}/events/stream?after=${after}`, {
+      headers: { cookie: cookieHeader() }, signal: controller.signal,
+    });
+    assert(response.ok, `SSE status ${response.status}`);
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    while (!text.includes("\n\n")) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      text += decoder.decode(chunk.value, { stream: true });
+      if (text.includes("event:")) break;
+    }
+    await reader.cancel().catch(() => undefined);
+    return text;
+  } finally { clearTimeout(timer); controller.abort(); }
+}
+
 function toolJson(result: any) {
   const first = result?.content?.find((item: any) => item.type === "text");
   if (!first) throw new Error("Expected MCP text result");
@@ -51,7 +74,9 @@ let client: Client | null = null;
 let workspaceId = "";
 let chatId = "";
 let worktreePath = "";
-const repoParent = await mkdtemp(join(tmpdir(), "vps-mcp-smoke-"));
+const smokeRoot = process.env.SMOKE_REPO_ROOT ?? tmpdir();
+await mkdir(smokeRoot, { recursive: true });
+const repoParent = await mkdtemp(join(smokeRoot, "vps-mcp-smoke-"));
 const repo = join(repoParent, "repo");
 execFileSync("mkdir", ["-p", repo]);
 git(repo, "init", "-b", "main");
@@ -106,6 +131,7 @@ try {
 
   const connected = await client.callTool({ name: "chat_connect", arguments: { binding_code: binding.token } }); assert(!connected.isError, "chat_connect failed");
   const connectedBody = toolJson(connected); assert(connectedBody.context.messages.length === 2, "chat hydration did not include full verbatim history"); step("chat binding + full context hydration");
+  const sse = await readOneSse(chatId, 0); assert(sse.includes("event: agent.connected"), "public SSE did not replay agent.connected"); step("public SSE event replay");
 
   const image = await client.callTool({ name: "chat_attachment", arguments: { attachment_id: attachment.id } });
   assert(!image.isError && (image.content as any[])[0]?.type === "image", "MCP image attachment delivery failed"); step("MCP image attachment delivery");
@@ -121,6 +147,8 @@ try {
   const build = await client.callTool({ name: "chat_terminal", arguments: { command: "printf 'smoke-build\\n' > smoke.txt && git status --short" } }); assert(!build.isError, "Build command failed");
   const detail = await api<any>(`/api/chats/${chatId}`); worktreePath = detail.worktreePath; assert(worktreePath, "Build chat did not receive a worktree");
   await access(join(worktreePath, "smoke.txt"));
+  const changes = await api<any>(`/api/chats/${chatId}/diff`);
+  assert(changes.short.includes("smoke.txt"), "portal diff/status surface did not see Build changes");
   let baseChanged = true; try { await access(join(repo, "smoke.txt")); } catch { baseChanged = false; }
   assert(!baseChanged, "Build chat modified base checkout"); step("Build-mode isolated Git worktree + file activity");
 
